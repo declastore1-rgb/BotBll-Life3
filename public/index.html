@@ -126,14 +126,30 @@
             <div class="form-grid two">
               <label class="field"><span>Título del panel</span><input name="panelTitle" maxlength="256" required></label>
               <label class="field"><span>Texto del footer</span><input name="footerText" maxlength="2048" required></label>
-              <label class="field"><span>Botón para crear</span><input name="createButtonLabel" maxlength="80" required></label>
-              <label class="field"><span>Botón de información</span><input name="infoButtonLabel" maxlength="80" required></label>
+              <label class="field color-field"><span>Color del embed</span><div><input name="embedColor" type="color" value="#2b2d31"><code id="embed-color-value">#2B2D31</code></div></label>
             </div>
             <label class="field"><span>Descripción del panel</span><textarea name="panelDescription" rows="8" maxlength="4000" required></textarea></label>
+            <div class="divider"></div>
+            <div><div class="eyebrow">BOTONES PRINCIPALES</div><p class="muted helper-copy">Discord ofrece azul, gris, verde y rojo para botones interactivos.</p></div>
+            <div class="form-grid two">
+              <label class="field"><span>Texto · Abrir ticket</span><input name="createButtonLabel" maxlength="80" required></label>
+              <label class="field"><span>Color · Abrir ticket</span><select name="createButtonStyle"><option value="primary">Azul</option><option value="secondary">Gris</option><option value="success">Verde</option><option value="danger">Rojo</option></select></label>
+              <label class="field"><span>Texto · Información</span><input name="infoButtonLabel" maxlength="80" required></label>
+              <label class="field"><span>Color · Información</span><select name="infoButtonStyle"><option value="primary">Azul</option><option value="secondary">Gris</option><option value="success">Verde</option><option value="danger">Rojo</option></select></label>
+            </div>
+            <div class="extra-buttons-section">
+              <div class="card-header"><div><div class="eyebrow">BOTONES ADICIONALES</div><h3>Acciones personalizadas</h3><p class="muted helper-copy">Añade hasta 3 respuestas privadas o enlaces.</p></div><button id="add-extra-button" class="button ghost" type="button">Añadir botón</button></div>
+              <div id="extra-buttons-list" class="extra-buttons-list"><p class="empty-state">No hay botones adicionales.</p></div>
+            </div>
+            <div id="ticket-preview" class="ticket-preview">
+              <div class="preview-eyebrow">VISTA PREVIA</div>
+              <article id="preview-embed" class="preview-embed"><h4 id="preview-title">BLL $ LIFE - Ticket</h4><p id="preview-description"></p><small id="preview-footer">Copyright Team Bll $ Life</small></article>
+              <div id="preview-buttons" class="preview-buttons"></div>
+            </div>
             <div class="form-actions"><span id="tickets-save-state" class="save-state"></span><button class="button primary" type="submit">Guardar Tickets</button></div>
           </form>
           <article class="panel-card publish-card">
-            <div><div class="eyebrow">PUBLICAR</div><h3>Enviar panel al servidor</h3><p class="muted">Selecciona el canal donde aparecerá el embed.</p></div>
+            <div><div class="eyebrow">PUBLICAR</div><h3>Enviar panel al servidor</h3><p class="muted">Selecciona el canal. Los paneles publicados desde aquí se actualizarán automáticamente.</p></div>
             <div class="publish-controls"><select id="publish-channel"><option value="">Selecciona un canal</option></select><button id="publish-button" class="button secondary" type="button">Publicar panel</button></div>
           </article>
         </section>
@@ -155,6 +171,21 @@
       </div>
     </div>
   </div>
+
+  <dialog id="extra-button-dialog" class="modal">
+    <form id="extra-button-form" method="dialog">
+      <div class="modal-header"><div><div class="eyebrow">BOTÓN PERSONALIZADO</div><h3 id="extra-button-title">Nuevo botón</h3></div><button class="icon-button extra-button-close" type="button" aria-label="Cerrar">×</button></div>
+      <input name="id" type="hidden">
+      <div class="form-grid two">
+        <label class="field"><span>Etiqueta</span><input name="label" maxlength="80" required placeholder="Reglas"></label>
+        <label class="field"><span>Acción</span><select name="type"><option value="response">Respuesta privada</option><option value="link">Abrir enlace</option></select></label>
+        <label id="extra-style-field" class="field"><span>Color</span><select name="style"><option value="primary">Azul</option><option value="secondary">Gris</option><option value="success">Verde</option><option value="danger">Rojo</option></select></label>
+      </div>
+      <label class="field"><span id="extra-value-label">Mensaje privado</span><textarea name="value" rows="5" maxlength="2000" required placeholder="Contenido que verá el usuario..."></textarea><small id="extra-value-help">Se mostrará únicamente al usuario que pulse el botón.</small></label>
+      <p id="extra-button-error" class="form-error hidden"></p>
+      <div class="form-actions"><button class="button ghost extra-button-cancel" type="button">Cancelar</button><button class="button primary" type="submit">Guardar botón</button></div>
+    </form>
+  </dialog>
 
   <dialog id="user-dialog" class="modal">
     <form id="user-form" method="dialog">

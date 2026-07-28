@@ -78,7 +78,6 @@ export function sessionCookie(token, secure) {
     'Path=/',
     'HttpOnly',
     'SameSite=Strict',
-    `Max-Age=${Math.floor(SESSION_DURATION_MS / 1_000)}`,
   ];
   if (secure) attributes.push('Secure');
   return attributes.join('; ');

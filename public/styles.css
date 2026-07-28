@@ -134,6 +134,26 @@ input:focus, select:focus, textarea:focus { border-color: rgba(155, 124, 255, .6
 .divider { height: 1px; background: var(--line); }
 .form-actions { justify-content: flex-end; padding-top: 4px; }
 .save-state { color: var(--success); font-size: 11px; margin-right: auto; }
+.helper-copy { margin: 6px 0 0; font-size: 11px; }
+.color-field > div { display: flex; align-items: center; gap: 10px; }
+.color-field input[type="color"] { width: 62px; height: 43px; padding: 4px; }
+.color-field code { color: #c9cedb; font-size: 12px; }
+.extra-buttons-section { padding: 18px; border: 1px solid var(--line); border-radius: 15px; background: rgba(255, 255, 255, .015); }
+.extra-buttons-list { display: grid; gap: 9px; margin-top: 16px; }
+.extra-button-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(7, 9, 16, .5); }
+.extra-button-card strong { display: block; font-size: 12px; }
+.extra-button-card small { display: block; max-width: 540px; margin-top: 4px; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.inline-actions { display: flex; gap: 7px; flex: 0 0 auto; }
+.inline-actions .button { min-height: 32px; padding: 6px 10px; font-size: 10px; }
+.ticket-preview { display: grid; gap: 11px; padding: 20px; border: 1px dashed rgba(155, 124, 255, .28); border-radius: 15px; background: #0d1018; }
+.preview-eyebrow { color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .16em; }
+.preview-embed { padding: 15px 17px; border-left: 4px solid #2b2d31; border-radius: 4px 10px 10px 4px; background: #20242e; }
+.preview-embed h4 { margin: 0 0 9px; font-size: 14px; }
+.preview-embed p { max-height: 92px; margin: 0; overflow: hidden; color: #d1d5df; font-size: 11px; line-height: 1.5; white-space: pre-line; }
+.preview-embed small { display: block; margin-top: 13px; color: #a6acb8; font-size: 9px; }
+.preview-buttons { display: flex; flex-wrap: wrap; gap: 7px; }
+.discord-button { padding: 7px 12px; border-radius: 4px; color: white; font-size: 10px; font-weight: 700; }
+.discord-button.primary { background: #5865f2; }.discord-button.secondary { background: #4e5058; }.discord-button.success { background: #248046; }.discord-button.danger { background: #da373c; }.discord-button.link { background: #4e5058; }
 .publish-card { margin-top: 18px; display: flex; align-items: center; justify-content: space-between; gap: 26px; }
 .publish-card p { margin: 6px 0 0; font-size: 11px; }
 .publish-controls { min-width: min(100%, 480px); display: flex; gap: 10px; }.publish-controls select { min-width: 230px; }
@@ -173,6 +193,8 @@ fieldset.disabled { opacity: .45; pointer-events: none; }
   .topbar-user > div:first-child { display: none; }.hero-card { padding: 28px 24px; min-height: 200px; }.shield-visual { width: 105px; height: 105px; margin: 0; }.shield-core { width: 60px; height: 70px; font-size: 12px; }
   .two-column, .form-grid.two, .form-grid.three { grid-template-columns: 1fr; }.publish-card { align-items: stretch; flex-direction: column; }.publish-controls { min-width: 0; }.users-grid { grid-template-columns: 1fr; }
   .permission-grid { grid-template-columns: 1fr; }
+  .extra-button-card { align-items: stretch; flex-direction: column; }
+  .inline-actions .button { flex: 1; }
 }
 @media (max-width: 520px) {
   .login-shell { padding: 14px; }.login-card { padding: 30px 23px; }.stats-grid { grid-template-columns: 1fr 1fr; gap: 10px; }.stat-card { padding: 16px; }.stat-card strong { font-size: 22px; }

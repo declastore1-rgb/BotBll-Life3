@@ -14,6 +14,7 @@ import {
   buildPanel,
   closeTicket,
   createTicket,
+  handleExtraButton,
   showServerInfo,
   ticketIds,
 } from './tickets.js';
@@ -85,7 +86,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await interaction.reply({ content: 'Selecciona un canal de texto válido.', flags: MessageFlags.Ephemeral });
           return;
         }
-        await channel.send(buildPanel(tickets));
+        const message = await channel.send(buildPanel(tickets));
+        await store.recordPublishedPanel(
+          interaction.guildId,
+          channel.id,
+          message.id,
+          interaction.user.tag,
+        );
         await interaction.reply({ content: `Panel creado correctamente en ${channel}.`, flags: MessageFlags.Ephemeral });
         return;
       }
@@ -116,6 +123,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === ticketIds.create) await createTicket(interaction, store);
     else if (interaction.customId === ticketIds.info) await showServerInfo(interaction, store);
     else if (interaction.customId === ticketIds.close) await closeTicket(interaction, store);
+    else if (interaction.customId.startsWith(ticketIds.extraPrefix)) {
+      await handleExtraButton(interaction, store);
+    }
   } catch (error) {
     console.error('Error procesando una interacción:', error);
     const response = { content: 'Ocurrió un error al procesar la acción.', flags: MessageFlags.Ephemeral };

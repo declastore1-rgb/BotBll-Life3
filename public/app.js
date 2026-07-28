@@ -1,10 +1,14 @@
-const state = { user: null, csrf: null, permissions: [], resources: null, users: [] };
+const state = { user: null, csrf: null, permissions: [], resources: null, users: [], extraButtons: [] };
 const pages = { overview: 'Resumen', antiraid: 'Anti-Raid', tickets: 'Tickets', users: 'Usuarios', account: 'Mi cuenta' };
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 async function api(path, options = {}) {
-  const request = { method: options.method ?? 'GET', headers: { Accept: 'application/json' } };
+  const request = {
+    method: options.method ?? 'GET',
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' },
+  };
   if (options.body !== undefined) {
     request.headers['Content-Type'] = 'application/json';
     request.body = JSON.stringify(options.body);
@@ -165,6 +169,7 @@ function populateSelect(select, items, selected, prefix = '') {
 
 async function loadTickets() {
   const [data, resources] = await Promise.all([api('/api/tickets'), getResources()]);
+  state.extraButtons = structuredClone(data.settings.extraButtons ?? []);
   fillForm($('#tickets-form'), data.settings);
   populateSelect($('#tickets-form [name="categoryId"]'), resources.categories, data.settings.categoryId);
   populateSelect($('#tickets-form [name="supportRoleId"]'), resources.roles, data.settings.supportRoleId, '@');
@@ -176,6 +181,85 @@ async function loadTickets() {
   }
   commandSelect.value = data.settings.commandRoleId;
   populateSelect($('#publish-channel'), resources.channels, '', '#');
+  renderExtraButtons();
+  updateTicketPreview();
+}
+
+const ticketStyleLabels = { primary: 'Azul', secondary: 'Gris', success: 'Verde', danger: 'Rojo', link: 'Enlace' };
+
+function updateTicketPreview() {
+  const form = $('#tickets-form');
+  if (!form) return;
+  const color = form.elements.embedColor.value || '#2B2D31';
+  $('#embed-color-value').textContent = color.toUpperCase();
+  $('#preview-title').textContent = form.elements.panelTitle.value || 'Título del panel';
+  $('#preview-description').textContent = form.elements.panelDescription.value || 'Descripción del panel';
+  $('#preview-footer').textContent = form.elements.footerText.value || 'Footer';
+  const buttons = [
+    { label: form.elements.createButtonLabel.value || 'Abrir ticket', style: form.elements.createButtonStyle.value },
+    { label: form.elements.infoButtonLabel.value || 'Información', style: form.elements.infoButtonStyle.value },
+    ...state.extraButtons,
+  ];
+  $('#preview-buttons').replaceChildren(...buttons.map((button) => {
+    const element = document.createElement('span');
+    element.className = `discord-button ${button.style}`;
+    element.textContent = button.label;
+    return element;
+  }));
+}
+
+function renderExtraButtons() {
+  const list = $('#extra-buttons-list');
+  $('#add-extra-button').disabled = state.extraButtons.length >= 3;
+  if (!state.extraButtons.length) {
+    list.innerHTML = '<p class="empty-state">No hay botones adicionales.</p>';
+    updateTicketPreview();
+    return;
+  }
+  list.replaceChildren(...state.extraButtons.map((button) => {
+    const card = document.createElement('article'); card.className = 'extra-button-card';
+    const summary = document.createElement('div');
+    const title = document.createElement('strong'); title.textContent = button.label;
+    const detail = document.createElement('small');
+    detail.textContent = button.type === 'link'
+      ? `Enlace · ${button.value}`
+      : `Respuesta privada · ${ticketStyleLabels[button.style]}`;
+    summary.append(title, detail);
+    const actions = document.createElement('div'); actions.className = 'inline-actions';
+    const edit = document.createElement('button'); edit.className = 'button ghost'; edit.type = 'button'; edit.textContent = 'Editar'; edit.addEventListener('click', () => openExtraButtonDialog(button));
+    const remove = document.createElement('button'); remove.className = 'button danger'; remove.type = 'button'; remove.textContent = 'Eliminar'; remove.addEventListener('click', () => {
+      state.extraButtons = state.extraButtons.filter((item) => item.id !== button.id);
+      renderExtraButtons();
+      updateTicketPreview();
+    });
+    actions.append(edit, remove); card.append(summary, actions); return card;
+  }));
+  updateTicketPreview();
+}
+
+function updateExtraButtonFields() {
+  const form = $('#extra-button-form');
+  const isLink = form.elements.type.value === 'link';
+  $('#extra-style-field').classList.toggle('hidden', isLink);
+  $('#extra-value-label').textContent = isLink ? 'Dirección del enlace' : 'Mensaje privado';
+  $('#extra-value-help').textContent = isLink
+    ? 'Debe comenzar con https:// y apuntar a un sitio público.'
+    : 'Se mostrará únicamente al usuario que pulse el botón.';
+  form.elements.value.placeholder = isLink ? 'https://ejemplo.com' : 'Contenido que verá el usuario...';
+  form.elements.value.maxLength = isLink ? 512 : 2000;
+}
+
+function openExtraButtonDialog(button = null) {
+  const form = $('#extra-button-form'); form.reset();
+  $('#extra-button-error').classList.add('hidden');
+  form.elements.id.value = button?.id ?? '';
+  form.elements.label.value = button?.label ?? '';
+  form.elements.type.value = button?.type ?? 'response';
+  form.elements.style.value = button?.style === 'link' ? 'secondary' : button?.style ?? 'secondary';
+  form.elements.value.value = button?.value ?? '';
+  $('#extra-button-title').textContent = button ? 'Editar botón' : 'Nuevo botón';
+  updateExtraButtonFields();
+  $('#extra-button-dialog').showModal();
 }
 
 async function loadUsers() {
@@ -262,10 +346,52 @@ $('#antiraid-form').addEventListener('submit', async (event) => {
   catch (error) { toast(error.message, 'error'); } finally { setButtonBusy(button, false); }
 });
 
+$('#tickets-form').addEventListener('input', updateTicketPreview);
 $('#tickets-form').addEventListener('submit', async (event) => {
   event.preventDefault(); const button = event.currentTarget.querySelector('[type="submit"]'); setButtonBusy(button, true, 'Guardando...');
-  try { await api('/api/tickets', { method: 'PATCH', body: formObject(event.currentTarget) }); $('#tickets-save-state').textContent = 'Configuración guardada'; toast('Sistema de tickets actualizado.'); }
-  catch (error) { toast(error.message, 'error'); } finally { setButtonBusy(button, false); }
+  try {
+    const body = formObject(event.currentTarget);
+    body.extraButtons = state.extraButtons;
+    const result = await api('/api/tickets', { method: 'PATCH', body });
+    state.extraButtons = structuredClone(result.settings.extraButtons ?? []);
+    renderExtraButtons();
+    $('#tickets-save-state').textContent = result.panelsUpdated
+      ? `${result.panelsUpdated} panel(es) actualizado(s)`
+      : 'Configuración guardada';
+    toast(result.panelsUpdated
+      ? `Tickets guardados y ${result.panelsUpdated} panel(es) actualizado(s).`
+      : 'Sistema de tickets actualizado.');
+  } catch (error) { toast(error.message, 'error'); } finally { setButtonBusy(button, false); }
+});
+
+$('#add-extra-button').addEventListener('click', () => {
+  if (state.extraButtons.length >= 3) return toast('Discord permite un máximo de 5 botones en esta fila.', 'error');
+  openExtraButtonDialog();
+});
+$('#extra-button-form [name="type"]').addEventListener('change', updateExtraButtonFields);
+$$('.extra-button-close, .extra-button-cancel').forEach((button) => button.addEventListener('click', () => $('#extra-button-dialog').close()));
+$('#extra-button-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const id = form.elements.id.value || crypto.randomUUID();
+  const item = {
+    id,
+    label: form.elements.label.value.trim(),
+    type: form.elements.type.value,
+    style: form.elements.type.value === 'link' ? 'link' : form.elements.style.value,
+    value: form.elements.value.value.trim(),
+  };
+  if (!item.label || !item.value) {
+    $('#extra-button-error').textContent = 'Completa la etiqueta y el contenido del botón.';
+    $('#extra-button-error').classList.remove('hidden');
+    return;
+  }
+  const index = state.extraButtons.findIndex((button) => button.id === id);
+  if (index === -1) state.extraButtons.push(item);
+  else state.extraButtons[index] = item;
+  $('#extra-button-dialog').close();
+  renderExtraButtons();
+  updateTicketPreview();
 });
 
 $('#publish-button').addEventListener('click', async () => {

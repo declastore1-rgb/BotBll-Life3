@@ -61,8 +61,13 @@ export const defaultGuildSettings = Object.freeze({
       '🇺🇸 · Hello! Use the buttons below to open a support ticket or view additional server information.\n\n' +
       '🇧🇷 · Olá! Use os botões abaixo para abrir um ticket de suporte ou visualizar informações adicionais do servidor.',
     footerText: 'Copyright Team Bll $ Life',
+    embedColor: '#2B2D31',
     createButtonLabel: 'Abrir ticket',
+    createButtonStyle: 'primary',
     infoButtonLabel: 'Información',
+    infoButtonStyle: 'secondary',
+    extraButtons: [],
+    publishedPanels: [],
   }),
 });
 

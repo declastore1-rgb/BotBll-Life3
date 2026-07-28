@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -13,12 +14,19 @@ import {
 } from './auth.js';
 import { config } from './config.js';
 import { can, dashboardPermissions, toPublicUser } from './store.js';
-import { buildPanel, syncOpenTicketPermissions } from './tickets.js';
+import {
+  buildPanel,
+  syncOpenTicketPermissions,
+  syncPublishedPanels,
+} from './tickets.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, '..', 'public');
 const loginAttempts = new Map();
 const SNOWFLAKE = /^\d{17,20}$/;
+const HEX_COLOR = /^#[0-9A-F]{6}$/i;
+const BUTTON_STYLES = new Set(['primary', 'secondary', 'success', 'danger']);
+const EXTRA_BUTTON_ID = /^[a-zA-Z0-9_-]{1,36}$/;
 
 function cleanText(value, fallback, maxLength) {
   if (value === undefined) return fallback;
@@ -43,6 +51,73 @@ function cleanInteger(body, key, minimum, maximum) {
     throw new Error(`${key} debe estar entre ${minimum} y ${maximum}.`);
   }
   return value;
+}
+
+function cleanColor(value, fallback) {
+  if (value === undefined) return fallback;
+  const color = String(value).trim().toUpperCase();
+  if (!HEX_COLOR.test(color)) throw new Error('El color del embed debe usar formato #RRGGBB.');
+  return color;
+}
+
+function cleanButtonStyle(value, fallback) {
+  if (value === undefined) return fallback;
+  if (!BUTTON_STYLES.has(value)) throw new Error('Uno de los colores de botón no es válido.');
+  return value;
+}
+
+function isPrivateHostname(hostname) {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host === '::1' || host.endsWith('.local')) return true;
+  const parts = host.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  return parts[0] === 10
+    || parts[0] === 127
+    || parts[0] === 0
+    || (parts[0] === 169 && parts[1] === 254)
+    || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
+    || (parts[0] === 192 && parts[1] === 168);
+}
+
+function sanitizeExtraButtons(value, current) {
+  if (value === undefined) return current;
+  if (!Array.isArray(value) || value.length > 3) {
+    throw new Error('Puedes configurar hasta 3 botones adicionales.');
+  }
+  const ids = new Set();
+  return value.map((button) => {
+    if (!button || typeof button !== 'object') throw new Error('Uno de los botones adicionales no es válido.');
+    const rawId = typeof button.id === 'string' ? button.id : '';
+    const id = EXTRA_BUTTON_ID.test(rawId) ? rawId : randomUUID();
+    if (ids.has(id)) throw new Error('Dos botones adicionales tienen el mismo ID.');
+    ids.add(id);
+    const type = button.type;
+    if (!['response', 'link'].includes(type)) throw new Error('El tipo de botón adicional no es válido.');
+    if (typeof button.label !== 'string') throw new Error('Cada botón necesita una etiqueta.');
+    const label = cleanText(button.label, undefined, 80);
+    if (type === 'link') {
+      let url;
+      try { url = new URL(button.value); } catch { throw new Error(`El enlace de “${label}” no es válido.`); }
+      if (
+        url.protocol !== 'https:'
+        || url.username
+        || url.password
+        || isPrivateHostname(url.hostname)
+        || url.toString().length > 512
+      ) {
+        throw new Error(`El enlace de “${label}” debe usar HTTPS y un destino público.`);
+      }
+      return { id, label, type, style: 'link', value: url.toString() };
+    }
+    if (typeof button.value !== 'string') throw new Error(`El botón “${label}” necesita contenido.`);
+    return {
+      id,
+      label,
+      type,
+      style: cleanButtonStyle(button.style, 'secondary'),
+      value: cleanText(button.value, undefined, 2_000),
+    };
+  });
 }
 
 function sanitizeAntiRaid(body) {
@@ -95,8 +170,12 @@ function sanitizeTickets(body, current) {
   patch.panelTitle = cleanText(body.panelTitle, current.panelTitle, 256);
   patch.panelDescription = cleanText(body.panelDescription, current.panelDescription, 4_000);
   patch.footerText = cleanText(body.footerText, current.footerText, 2_048);
+  patch.embedColor = cleanColor(body.embedColor, current.embedColor);
   patch.createButtonLabel = cleanText(body.createButtonLabel, current.createButtonLabel, 80);
+  patch.createButtonStyle = cleanButtonStyle(body.createButtonStyle, current.createButtonStyle);
   patch.infoButtonLabel = cleanText(body.infoButtonLabel, current.infoButtonLabel, 80);
+  patch.infoButtonStyle = cleanButtonStyle(body.infoButtonStyle, current.infoButtonStyle);
+  patch.extraButtons = sanitizeExtraButtons(body.extraButtons, current.extraButtons ?? []);
   return patch;
 }
 
@@ -330,7 +409,12 @@ export function createWebServer({ client, store, antiRaid }) {
           .catch((rollbackError) => console.error('No se pudo revertir el rol de soporte:', rollbackError));
         throw error;
       }
-      response.json({ settings, permissionsSync });
+      const panelSync = await syncPublishedPanels(guild, settings);
+      if (panelSync.active.length !== (settings.publishedPanels ?? []).length) {
+        await store.replacePublishedPanels(config.guildId, panelSync.active);
+        settings.publishedPanels = panelSync.active;
+      }
+      response.json({ settings, permissionsSync, panelsUpdated: panelSync.updated });
     } catch (error) {
       next(error);
     }
@@ -345,10 +429,11 @@ export function createWebServer({ client, store, antiRaid }) {
       const tickets = store.getGuildSettings(config.guildId).tickets;
       if (!tickets.enabled) throw new Error('Activa primero el sistema de tickets.');
       const message = await channel.send(buildPanel(tickets));
-      await store.recordAudit(
-        request.dashboardAuth.user.username,
-        'Tickets',
-        `Panel publicado en #${channel.name}`,
+      await store.recordPublishedPanel(
+        config.guildId,
+        channel.id,
+        message.id,
+        request.dashboardAuth.user,
       );
       response.json({ ok: true, messageId: message.id });
     } catch (error) {

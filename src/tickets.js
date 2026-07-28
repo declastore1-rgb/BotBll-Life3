@@ -8,18 +8,38 @@ import {
   PermissionFlagsBits,
 } from 'discord.js';
 
-const PANEL_COLOR = 0x2b2d31;
 const TICKET_PREFIX = 'ticket-owner:';
+const BUTTON_STYLES = Object.freeze({
+  primary: ButtonStyle.Primary,
+  secondary: ButtonStyle.Secondary,
+  success: ButtonStyle.Success,
+  danger: ButtonStyle.Danger,
+});
 
 export const ticketIds = Object.freeze({
   create: 'ticket:create',
   info: 'ticket:info',
   close: 'ticket:close',
+  extraPrefix: 'ticket:extra:',
 });
+
+function resolveButtonStyle(style, fallback) {
+  return BUTTON_STYLES[style] ?? BUTTON_STYLES[fallback];
+}
+
+function buildExtraButton(button) {
+  const builder = new ButtonBuilder().setLabel(button.label);
+  if (button.type === 'link') {
+    return builder.setURL(button.value).setStyle(ButtonStyle.Link);
+  }
+  return builder
+    .setCustomId(`${ticketIds.extraPrefix}${button.id}`)
+    .setStyle(resolveButtonStyle(button.style, 'secondary'));
+}
 
 export function buildPanel(settings) {
   const embed = new EmbedBuilder()
-    .setColor(PANEL_COLOR)
+    .setColor(settings.embedColor)
     .setTitle(settings.panelTitle)
     .setDescription(settings.panelDescription)
     .setFooter({ text: settings.footerText })
@@ -30,12 +50,13 @@ export function buildPanel(settings) {
       .setCustomId(ticketIds.create)
       .setLabel(settings.createButtonLabel)
       .setEmoji('🎫')
-      .setStyle(ButtonStyle.Primary),
+      .setStyle(resolveButtonStyle(settings.createButtonStyle, 'primary')),
     new ButtonBuilder()
       .setCustomId(ticketIds.info)
       .setLabel(settings.infoButtonLabel)
       .setEmoji('ℹ️')
-      .setStyle(ButtonStyle.Secondary),
+      .setStyle(resolveButtonStyle(settings.infoButtonStyle, 'secondary')),
+    ...(settings.extraButtons ?? []).map(buildExtraButton),
   );
 
   return { embeds: [embed], components: [row] };
@@ -198,6 +219,20 @@ export async function showServerInfo(interaction, store) {
   await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
+export async function handleExtraButton(interaction, store) {
+  const settings = store.getGuildSettings(interaction.guildId).tickets;
+  const buttonId = interaction.customId.slice(ticketIds.extraPrefix.length);
+  const button = (settings.extraButtons ?? []).find((item) => item.id === buttonId);
+  if (!button || button.type !== 'response') {
+    await interaction.reply({
+      content: 'Este botón ya no está disponible.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  await interaction.reply({ content: button.value, flags: MessageFlags.Ephemeral });
+}
+
 export async function closeTicket(interaction, store) {
   const ownerId = interaction.channel?.topic?.startsWith(TICKET_PREFIX)
     ? interaction.channel.topic.slice(TICKET_PREFIX.length)
@@ -287,4 +322,26 @@ export async function syncOpenTicketPermissions(guild, previousRoleId, nextRoleI
     }));
     throw new Error(`No se pudieron sincronizar los tickets abiertos: ${error.message}`);
   }
+}
+
+export async function syncPublishedPanels(guild, settings) {
+  const active = [];
+  let updated = 0;
+  for (const panel of settings.publishedPanels ?? []) {
+    try {
+      const channel = guild.channels.cache.get(panel.channelId)
+        ?? await guild.channels.fetch(panel.channelId);
+      if (!channel?.isTextBased()) continue;
+      const message = await channel.messages.fetch(panel.messageId);
+      await message.edit(buildPanel(settings));
+      active.push(panel);
+      updated += 1;
+    } catch (error) {
+      if (![10003, 10008].includes(error.code)) {
+        active.push(panel);
+        console.error(`No se pudo actualizar el panel ${panel.messageId}:`, error);
+      }
+    }
+  }
+  return { active, updated };
 }

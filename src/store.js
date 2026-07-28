@@ -142,6 +142,26 @@ export class SettingsStore {
     });
   }
 
+  async recordPublishedPanel(guildId, channelId, messageId, actor) {
+    return this.mutate((data) => {
+      const tickets = data.guilds[guildId].tickets;
+      const panels = Array.isArray(tickets.publishedPanels) ? tickets.publishedPanels : [];
+      tickets.publishedPanels = [
+        ...panels.filter((panel) => panel.messageId !== messageId),
+        { channelId, messageId },
+      ].slice(-25);
+      this.addAudit(actor, 'Tickets', `Panel publicado en el canal ${channelId}`);
+      return clone(tickets.publishedPanels);
+    });
+  }
+
+  async replacePublishedPanels(guildId, panels) {
+    return this.mutate((data) => {
+      data.guilds[guildId].tickets.publishedPanels = clone(panels).slice(-25);
+      return clone(data.guilds[guildId].tickets.publishedPanels);
+    });
+  }
+
   async updateGuildSection(guildId, section, patch, actor) {
     if (!['antiRaid', 'tickets'].includes(section)) throw new Error('Sección inválida.');
     return this.mutate((data) => {
