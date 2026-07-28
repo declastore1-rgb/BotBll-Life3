@@ -431,79 +431,66 @@ const ticketButtonStyles = {
   success: { label: 'Verde', color: '#248046' },
   danger: { label: 'Rojo', color: '#DA373C' },
 };
+const ticketStyleLabels = {
+  ...Object.fromEntries(Object.entries(ticketButtonStyles).map(([style, value]) => [style, value.label])),
+  link: 'Enlace',
+};
 
-function discordStyleForColor(color) {
-  const [red, green, blue] = [1, 3, 5].map((index) => Number.parseInt(color.slice(index, index + 2), 16) / 255);
-  const maximum = Math.max(red, green, blue);
-  const minimum = Math.min(red, green, blue);
-  const delta = maximum - minimum;
-  const lightness = (maximum + minimum) / 2;
-  const saturation = delta === 0 ? 0 : delta / (1 - Math.abs((2 * lightness) - 1));
-  if (saturation < 0.2) return 'secondary';
-
-  let hue;
-  if (maximum === red) hue = 60 * (((green - blue) / delta) % 6);
-  else if (maximum === green) hue = 60 * (((blue - red) / delta) + 2);
-  else hue = 60 * (((red - green) / delta) + 4);
-  if (hue < 0) hue += 360;
-  if (hue < 20 || hue >= 300) return 'danger';
-  if (hue < 170) return 'success';
-  return 'primary';
-}
-
-function syncTicketButtonColorPicker(select, color) {
-  const picker = select?._ticketButtonColorPicker;
+function syncTicketButtonStylePicker(select) {
+  const picker = select?._ticketButtonStylePicker;
   if (!picker) return;
-  const fallback = ticketButtonStyles[select.value]?.color ?? ticketButtonStyles.primary.color;
-  const selectedColor = /^#[0-9A-F]{6}$/i.test(color ?? '') ? color.toUpperCase() : fallback;
-  picker.input.value = selectedColor;
-  picker.code.textContent = selectedColor;
-  select.value = discordStyleForColor(selectedColor);
+  for (const button of picker.buttons) {
+    const selected = button.dataset.style === select.value;
+    button.classList.toggle('selected', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  }
 }
 
-function ensureTicketButtonColorPicker(select, color) {
+function ensureTicketButtonStylePicker(select) {
   if (!select) return;
   select.classList.add('ticket-button-style-select');
-  if (!select._ticketButtonColorPicker) {
-    const control = document.createElement('div');
-    control.className = 'ticket-button-color-control';
-    const input = document.createElement('input');
-    input.type = 'color';
-    input.name = select.name === 'style' ? 'color' : select.name.replace(/Style$/, 'Color');
-    input.setAttribute('aria-label', select.getAttribute('aria-label') || 'Elegir color del botón');
-    const code = document.createElement('code');
-    control.append(input, code);
-    select.insertAdjacentElement('afterend', control);
-    select._ticketButtonColorPicker = { control, input, code };
-
-    input.addEventListener('input', () => {
-      const selectedColor = input.value.toUpperCase();
-      select.value = discordStyleForColor(selectedColor);
-      code.textContent = selectedColor;
-      updateTicketPreview();
+  if (!select._ticketButtonStylePicker) {
+    const root = document.createElement('div');
+    root.className = 'ticket-button-style-picker';
+    const buttons = Object.entries(ticketButtonStyles).map(([style, option]) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'ticket-button-style-option';
+      button.dataset.style = style;
+      button.setAttribute('aria-label', `Usar color ${option.label}`);
+      const swatch = document.createElement('span');
+      swatch.className = 'ticket-button-style-swatch';
+      swatch.style.backgroundColor = option.color;
+      const label = document.createElement('span');
+      label.textContent = option.label;
+      button.append(swatch, label);
+      button.addEventListener('click', () => {
+        select.value = style;
+        syncTicketButtonStylePicker(select);
+        updateTicketPreview();
+      });
+      return button;
     });
-    input.addEventListener('change', updateTicketPreview);
+    root.append(...buttons);
+    select.insertAdjacentElement('afterend', root);
+    select._ticketButtonStylePicker = { root, buttons };
   }
-  syncTicketButtonColorPicker(select, color);
+  syncTicketButtonStylePicker(select);
 }
 
-function initializeTicketButtonColorPickers(settings) {
-  ensureTicketButtonColorPicker(
+function initializeTicketButtonStylePickers() {
+  [
     $('#tickets-form [name="createButtonStyle"]'),
-    settings.createButtonColor,
-  );
-  ensureTicketButtonColorPicker(
     $('#tickets-form [name="infoButtonStyle"]'),
-    settings.infoButtonColor,
-  );
-  ensureTicketButtonColorPicker($('#extra-button-form [name="style"]'));
+    $('#extra-button-form [name="style"]'),
+  ].forEach(ensureTicketButtonStylePicker);
 }
 
 async function loadTickets() {
   const [data, resources] = await Promise.all([api('/api/tickets'), getResources()]);
   state.extraButtons = structuredClone(data.settings.extraButtons ?? []);
   fillForm($('#tickets-form'), data.settings);
-  initializeTicketButtonColorPickers(data.settings);
+  initializeTicketButtonStylePickers();
   populateSelect($('#tickets-form [name="categoryId"]'), resources.categories, data.settings.categoryId);
   populateSelect($('#tickets-form [name="supportRoleId"]'), resources.roles, data.settings.supportRoleId, '@');
   populateSelect($('#tickets-form [name="logChannelId"]'), resources.channels, data.settings.logChannelId, '#');
@@ -537,13 +524,11 @@ function updateTicketPreview() {
     {
       label: form.elements.createButtonLabel.value || 'Abrir ticket',
       style: form.elements.createButtonStyle.value,
-      color: form.elements.createButtonColor?.value.toUpperCase(),
       emoji: readEmojiField('createButtonEmoji'),
     },
     {
       label: form.elements.infoButtonLabel.value || 'Información',
       style: form.elements.infoButtonStyle.value,
-      color: form.elements.infoButtonColor?.value.toUpperCase(),
       emoji: readEmojiField('infoButtonEmoji'),
     },
     ...state.extraButtons,
@@ -551,9 +536,6 @@ function updateTicketPreview() {
   $('#preview-buttons').replaceChildren(...buttons.map((button) => {
     const element = document.createElement('span');
     element.className = `discord-button ${button.style}`;
-    if (button.style !== 'link' && /^#[0-9A-F]{6}$/i.test(button.color ?? '')) {
-      element.style.backgroundColor = button.color;
-    }
     appendEmojiLabel(element, button.emoji, button.label);
     return element;
   }));
@@ -575,7 +557,7 @@ function renderExtraButtons() {
     const detail = document.createElement('small');
     detail.textContent = button.type === 'link'
       ? `Enlace · ${button.value}`
-      : `Respuesta privada · ${(button.color ?? ticketButtonStyles[button.style]?.color ?? '#4E5058').toUpperCase()}`;
+      : `Respuesta privada · ${ticketStyleLabels[button.style] ?? 'Gris'}`;
     summary.append(title, detail);
     const actions = document.createElement('div'); actions.className = 'inline-actions';
     const edit = document.createElement('button');
@@ -614,7 +596,7 @@ function openExtraButtonDialog(button = null) {
   form.elements.label.value = button?.label ?? '';
   form.elements.type.value = button?.type ?? 'response';
   form.elements.style.value = button?.style === 'link' ? 'secondary' : button?.style ?? 'secondary';
-  syncTicketButtonColorPicker(form.elements.style, button?.color);
+  syncTicketButtonStylePicker(form.elements.style);
   form.elements.value.value = button?.value ?? '';
   setEmojiField('extraButtonEmoji', button?.emoji);
   $('#extra-button-title').textContent = button ? 'Editar botón' : 'Nuevo botón';
@@ -1045,8 +1027,8 @@ $('#tickets-form').addEventListener('submit', async (event) => {
     body.extraButtons = state.extraButtons;
     const result = await api('/api/tickets', { method: 'PATCH', body });
     state.extraButtons = structuredClone(result.settings.extraButtons ?? []);
-    syncTicketButtonColorPicker(form.elements.createButtonStyle, result.settings.createButtonColor);
-    syncTicketButtonColorPicker(form.elements.infoButtonStyle, result.settings.infoButtonColor);
+    syncTicketButtonStylePicker(form.elements.createButtonStyle);
+    syncTicketButtonStylePicker(form.elements.infoButtonStyle);
     setEmojiField('createButtonEmoji', result.settings.createButtonEmoji);
     setEmojiField('infoButtonEmoji', result.settings.infoButtonEmoji);
     renderExtraButtons();
@@ -1075,7 +1057,6 @@ $('#extra-button-form').addEventListener('submit', (event) => {
     label: form.elements.label.value.trim(),
     type: form.elements.type.value,
     style: form.elements.type.value === 'link' ? 'link' : form.elements.style.value,
-    color: form.elements.color.value.toUpperCase(),
     value: form.elements.value.value.trim(),
     emoji: readEmojiField('extraButtonEmoji'),
   };

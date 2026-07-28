@@ -23,7 +23,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, '..', 'public');
-const DASHBOARD_VERSION = 'tickets-ui-20260728-5';
+const DASHBOARD_VERSION = 'tickets-ui-20260728-6';
 const loginAttempts = new Map();
 const SNOWFLAKE = /^\d{17,20}$/;
 const HEX_COLOR = /^#[0-9A-F]{6}$/i;
@@ -141,7 +141,6 @@ function sanitizeExtraButtons(value, current, guild) {
     const id = EXTRA_BUTTON_ID.test(rawId) ? rawId : randomUUID();
     if (ids.has(id)) throw new Error('Dos botones adicionales tienen el mismo ID.');
     ids.add(id);
-    const previous = current.find((item) => item.id === id);
     const type = button.type;
     if (!['response', 'link'].includes(type)) throw new Error('El tipo de botón adicional no es válido.');
     if (typeof button.label !== 'string') throw new Error('Cada botón necesita una etiqueta.');
@@ -163,7 +162,7 @@ function sanitizeExtraButtons(value, current, guild) {
         label,
         type,
         style: 'link',
-        color: cleanColor(button.color, previous?.color ?? BUTTON_STYLE_COLORS.link),
+        color: BUTTON_STYLE_COLORS.link,
         value: url.toString(),
         emoji: cleanEmoji(button.emoji, guild),
       };
@@ -175,7 +174,7 @@ function sanitizeExtraButtons(value, current, guild) {
       label,
       type,
       style,
-      color: cleanColor(button.color, previous?.color ?? BUTTON_STYLE_COLORS[style]),
+      color: BUTTON_STYLE_COLORS[style],
       value: cleanText(button.value, undefined, 2_000),
       emoji: cleanEmoji(button.emoji, guild),
     };
@@ -322,17 +321,11 @@ function sanitizeTickets(body, current, guild) {
   patch.panelImageUrl = cleanPublicUrl(body.panelImageUrl, current.panelImageUrl);
   patch.createButtonLabel = cleanText(body.createButtonLabel, current.createButtonLabel, 80);
   patch.createButtonStyle = cleanButtonStyle(body.createButtonStyle, current.createButtonStyle);
-  patch.createButtonColor = cleanColor(
-    body.createButtonColor,
-    current.createButtonColor ?? BUTTON_STYLE_COLORS[patch.createButtonStyle],
-  );
+  patch.createButtonColor = BUTTON_STYLE_COLORS[patch.createButtonStyle];
   patch.createButtonEmoji = cleanEmoji(body.createButtonEmoji, guild, current.createButtonEmoji);
   patch.infoButtonLabel = cleanText(body.infoButtonLabel, current.infoButtonLabel, 80);
   patch.infoButtonStyle = cleanButtonStyle(body.infoButtonStyle, current.infoButtonStyle);
-  patch.infoButtonColor = cleanColor(
-    body.infoButtonColor,
-    current.infoButtonColor ?? BUTTON_STYLE_COLORS[patch.infoButtonStyle],
-  );
+  patch.infoButtonColor = BUTTON_STYLE_COLORS[patch.infoButtonStyle];
   patch.infoButtonEmoji = cleanEmoji(body.infoButtonEmoji, guild, current.infoButtonEmoji);
   patch.extraButtons = sanitizeExtraButtons(body.extraButtons, current.extraButtons ?? [], guild);
   return patch;
