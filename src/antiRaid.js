@@ -4,17 +4,21 @@ import {
   Events,
   PermissionFlagsBits,
 } from 'discord.js';
-import { config } from './config.js';
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 export class AntiRaid {
-  constructor(client) {
+  constructor(client, store) {
     this.client = client;
+    this.store = store;
     this.joins = new Map();
     this.messages = new Map();
     this.actions = new Map();
     this.raidModeUntil = new Map();
+  }
+
+  settings(guildId) {
+    return this.store.getGuildSettings(guildId).antiRaid;
   }
 
   start() {
@@ -34,59 +38,73 @@ export class AntiRaid {
     });
   }
 
-  isTrusted(guild, userId) {
+  isTrusted(guild, userId, settings = this.settings(guild.id)) {
     if (!userId) return true;
-    return userId === guild.ownerId || userId === this.client.user.id || config.antiRaid.trustedUserIds.has(userId);
+    return userId === guild.ownerId
+      || userId === this.client.user?.id
+      || settings.trustedUserIds.includes(userId);
   }
 
   isRaidMode(guildId) {
     return (this.raidModeUntil.get(guildId) ?? 0) > Date.now();
   }
 
+  clearRaidMode(guildId) {
+    this.raidModeUntil.delete(guildId);
+    this.joins.delete(guildId);
+    for (const key of this.messages.keys()) {
+      if (key.startsWith(`${guildId}:`)) this.messages.delete(key);
+    }
+    for (const key of this.actions.keys()) {
+      if (key.startsWith(`${guildId}:`)) this.actions.delete(key);
+    }
+  }
+
   status(guildId) {
+    const settings = this.settings(guildId);
     return {
-      enabled: config.antiRaid.enabled,
+      enabled: settings.enabled,
       raidMode: this.isRaidMode(guildId),
       raidModeUntil: this.raidModeUntil.get(guildId) ?? null,
-      action: config.antiRaid.action,
-      joins: `${config.antiRaid.joinThreshold}/${config.antiRaid.joinWindowMs / 1_000}s`,
-      minimumAge: `${config.antiRaid.minAccountAgeMs / 3_600_000}h`,
-      spam: `${config.antiRaid.spamMessageThreshold}/${config.antiRaid.spamWindowMs / 1_000}s`,
-      mentions: config.antiRaid.massMentionThreshold,
-      destructive: `${config.antiRaid.destructiveThreshold}/${config.antiRaid.destructiveWindowMs / 1_000}s`,
+      action: settings.action,
+      joins: `${settings.joinThreshold}/${settings.joinWindowSeconds}s`,
+      minimumAge: `${settings.minAccountAgeHours}h`,
+      spam: `${settings.spamMessageThreshold}/${settings.spamWindowSeconds}s`,
+      mentions: settings.massMentionThreshold,
+      destructive: `${settings.destructiveThreshold}/${settings.destructiveWindowSeconds}s`,
     };
   }
 
-  activateRaidMode(guild, reason) {
-    const until = Date.now() + config.antiRaid.raidModeMs;
+  activateRaidMode(guild, reason, settings = this.settings(guild.id)) {
+    const until = Date.now() + settings.raidModeMinutes * 60_000;
     this.raidModeUntil.set(guild.id, until);
-    this.log(guild, '🚨 Modo raid activado', `${reason}\nActivo hasta <t:${Math.floor(until / 1_000)}:R>.`, 0xed4245);
+    this.log(guild, 'Modo raid activado', `${reason}\nActivo hasta <t:${Math.floor(until / 1_000)}:R>.`, 0xed4245);
   }
 
   async log(guild, title, description, color = 0xfee75c) {
     console.log(`[ANTI-RAID] ${guild.name}: ${title} - ${description.replaceAll('\n', ' ')}`);
-    if (!config.logChannelId) return;
-    const channel = guild.channels.cache.get(config.logChannelId);
+    const logChannelId = this.store.getGuildSettings(guild.id).tickets.logChannelId;
+    if (!logChannelId) return;
+    const channel = guild.channels.cache.get(logChannelId);
     if (!channel?.isTextBased()) return;
     const embed = new EmbedBuilder().setColor(color).setTitle(title).setDescription(description).setTimestamp();
     await channel.send({ embeds: [embed] }).catch(console.error);
   }
 
-  async applyAction(member, reason) {
-    if (!member || this.isTrusted(member.guild, member.id)) return false;
+  async applyAction(member, reason, settings = this.settings(member?.guild.id)) {
+    if (!member || this.isTrusted(member.guild, member.id, settings)) return false;
     const auditReason = `BLL Anti-Raid: ${reason}`;
-
     try {
-      if (config.antiRaid.action === 'ban' && member.bannable) {
+      if (settings.action === 'ban' && member.bannable) {
         await member.ban({ reason: auditReason, deleteMessageSeconds: 60 * 60 });
         return true;
       }
-      if (config.antiRaid.action === 'kick' && member.kickable) {
+      if (settings.action === 'kick' && member.kickable) {
         await member.kick(auditReason);
         return true;
       }
       if (member.moderatable) {
-        await member.timeout(config.antiRaid.timeoutMs, auditReason);
+        await member.timeout(settings.timeoutMinutes * 60_000, auditReason);
         return true;
       }
     } catch (error) {
@@ -95,92 +113,94 @@ export class AntiRaid {
     return false;
   }
 
-  async punishExecutor(guild, executorId, reason) {
-    if (this.isTrusted(guild, executorId)) return;
+  async punishExecutor(guild, executorId, reason, settings = this.settings(guild.id)) {
+    if (this.isTrusted(guild, executorId, settings)) return;
     const member = await guild.members.fetch(executorId).catch(() => null);
     if (!member) return;
-    const applied = await this.applyAction(member, reason);
+    const applied = await this.applyAction(member, reason, settings);
     await this.log(
       guild,
-      applied ? '🛡️ Amenaza neutralizada' : '⚠️ No se pudo sancionar',
+      applied ? 'Amenaza neutralizada' : 'No se pudo sancionar',
       `<@${executorId}> fue detectado por **${reason}**.`,
       applied ? 0x57f287 : 0xed4245,
     );
   }
 
   async onMemberAdd(member) {
-    if (!config.antiRaid.enabled) return;
+    const settings = this.settings(member.guild.id);
+    if (!settings.enabled) return;
     const now = Date.now();
+    const joinWindowMs = settings.joinWindowSeconds * 1_000;
     const recent = (this.joins.get(member.guild.id) ?? []).filter(
-      (timestamp) => now - timestamp <= config.antiRaid.joinWindowMs,
+      (timestamp) => now - timestamp <= joinWindowMs,
     );
     recent.push(now);
     this.joins.set(member.guild.id, recent);
 
     if (member.user.bot) {
-      await this.checkAddedBot(member);
+      await this.checkAddedBot(member, settings);
       return;
     }
-
-    if (recent.length >= config.antiRaid.joinThreshold && !this.isRaidMode(member.guild.id)) {
+    if (recent.length >= settings.joinThreshold && !this.isRaidMode(member.guild.id)) {
       this.activateRaidMode(
         member.guild,
-        `${recent.length} cuentas entraron en ${config.antiRaid.joinWindowMs / 1_000} segundos.`,
+        `${recent.length} cuentas entraron en ${settings.joinWindowSeconds} segundos.`,
+        settings,
       );
     }
 
     const accountAge = now - member.user.createdTimestamp;
     if (this.isRaidMode(member.guild.id)) {
-      const applied = await this.applyAction(member, 'entrada durante modo raid');
+      const applied = await this.applyAction(member, 'entrada durante modo raid', settings);
       if (applied) await this.log(member.guild, 'Entrada bloqueada', `${member.user.tag} entró durante el modo raid.`);
       return;
     }
-
-    if (accountAge < config.antiRaid.minAccountAgeMs) {
-      const applied = await this.applyAction(member, 'cuenta demasiado nueva');
+    if (accountAge < settings.minAccountAgeHours * 3_600_000) {
+      const applied = await this.applyAction(member, 'cuenta demasiado nueva', settings);
       if (applied) {
         await this.log(
           member.guild,
           'Cuenta nueva bloqueada',
-          `${member.user.tag} tenía una antigüedad inferior a ${config.antiRaid.minAccountAgeMs / 3_600_000} horas.`,
+          `${member.user.tag} tenía una antigüedad inferior a ${settings.minAccountAgeHours} horas.`,
         );
       }
     }
   }
 
-  async checkAddedBot(botMember) {
+  async checkAddedBot(botMember, settings) {
     await sleep(750);
+    settings = this.settings(botMember.guild.id);
+    if (!settings.enabled) return;
     const logs = await botMember.guild.fetchAuditLogs({ type: AuditLogEvent.BotAdd, limit: 5 }).catch(() => null);
     const entry = logs?.entries.find(
       (item) => item.targetId === botMember.id && Date.now() - item.createdTimestamp < 10_000,
     );
-    if (!entry || this.isTrusted(botMember.guild, entry.executorId)) return;
-
+    if (!entry || this.isTrusted(botMember.guild, entry.executorId, settings)) return;
     if (botMember.kickable) await botMember.kick('BLL Anti-Raid: bot no autorizado').catch(console.error);
-    await this.punishExecutor(botMember.guild, entry.executorId, 'adición de bot no autorizado');
+    await this.punishExecutor(botMember.guild, entry.executorId, 'adición de bot no autorizado', settings);
   }
 
   async onMessage(message) {
-    if (!config.antiRaid.enabled || !message.guild || message.author.bot) return;
-    if (this.isTrusted(message.guild, message.author.id)) return;
+    if (!message.guild || message.author.bot) return;
+    const settings = this.settings(message.guild.id);
+    if (!settings.enabled || this.isTrusted(message.guild, message.author.id, settings)) return;
     if (message.member?.permissions.has(PermissionFlagsBits.Administrator)) return;
 
     const now = Date.now();
     const key = `${message.guild.id}:${message.author.id}`;
-    const timestamps = (this.messages.get(key) ?? []).filter(
-      (timestamp) => now - timestamp <= config.antiRaid.spamWindowMs,
-    );
+    const spamWindowMs = settings.spamWindowSeconds * 1_000;
+    const timestamps = (this.messages.get(key) ?? []).filter((timestamp) => now - timestamp <= spamWindowMs);
     timestamps.push(now);
     this.messages.set(key, timestamps);
 
     const mentionCount = message.mentions.users.size + message.mentions.roles.size + (message.mentions.everyone ? 1 : 0);
-    const massMention = mentionCount >= config.antiRaid.massMentionThreshold;
-    const spam = timestamps.length >= config.antiRaid.spamMessageThreshold;
+    const massMention = mentionCount >= settings.massMentionThreshold;
+    const spam = timestamps.length >= settings.spamMessageThreshold;
     if (!massMention && !spam) return;
 
     await message.delete().catch(() => null);
     const reason = massMention ? 'menciones masivas' : 'spam';
-    const applied = await this.applyAction(message.member, reason);
+    const applied = await this.applyAction(message.member, reason, settings);
     this.messages.delete(key);
     await this.log(
       message.guild,
@@ -189,43 +209,57 @@ export class AntiRaid {
     );
   }
 
-  trackAction(guildId, executorId, action) {
+  trackAction(guildId, executorId, action, windowMs) {
     const now = Date.now();
     const key = `${guildId}:${executorId}:${action}`;
-    const timestamps = (this.actions.get(key) ?? []).filter(
-      (timestamp) => now - timestamp <= config.antiRaid.destructiveWindowMs,
-    );
+    const timestamps = (this.actions.get(key) ?? []).filter((timestamp) => now - timestamp <= windowMs);
     timestamps.push(now);
     this.actions.set(key, timestamps);
     return timestamps.length;
   }
 
   async onDestructiveEvent(guild, auditType, targetId, label) {
-    if (!config.antiRaid.enabled) return;
+    let settings = this.settings(guild.id);
+    if (!settings.enabled) return;
     await sleep(750);
+    settings = this.settings(guild.id);
+    if (!settings.enabled) return;
     const logs = await guild.fetchAuditLogs({ type: auditType, limit: 6 }).catch(() => null);
     const entry = logs?.entries.find(
       (item) => item.targetId === targetId && Date.now() - item.createdTimestamp < 10_000,
     );
-    if (!entry || this.isTrusted(guild, entry.executorId)) return;
+    if (!entry || this.isTrusted(guild, entry.executorId, settings)) return;
 
-    const count = this.trackAction(guild.id, entry.executorId, auditType);
-    if (count < config.antiRaid.destructiveThreshold) return;
-    this.activateRaidMode(guild, `${label} detectados por <@${entry.executorId}>.`);
-    await this.punishExecutor(guild, entry.executorId, label);
+    const count = this.trackAction(
+      guild.id,
+      entry.executorId,
+      auditType,
+      settings.destructiveWindowSeconds * 1_000,
+    );
+    if (count < settings.destructiveThreshold) return;
+    this.activateRaidMode(guild, `${label} detectados por <@${entry.executorId}>.`, settings);
+    await this.punishExecutor(guild, entry.executorId, label, settings);
   }
 
   async onWebhookUpdate(guild) {
-    if (!config.antiRaid.enabled) return;
+    let settings = this.settings(guild.id);
+    if (!settings.enabled) return;
     await sleep(750);
+    settings = this.settings(guild.id);
+    if (!settings.enabled) return;
     const auditTypes = [AuditLogEvent.WebhookCreate, AuditLogEvent.WebhookDelete, AuditLogEvent.WebhookUpdate];
     for (const auditType of auditTypes) {
       const logs = await guild.fetchAuditLogs({ type: auditType, limit: 1 }).catch(() => null);
       const entry = logs?.entries.first();
-      if (!entry || Date.now() - entry.createdTimestamp >= 10_000 || this.isTrusted(guild, entry.executorId)) continue;
-      const count = this.trackAction(guild.id, entry.executorId, 'webhook');
-      if (count >= config.antiRaid.destructiveThreshold) {
-        await this.punishExecutor(guild, entry.executorId, 'cambios masivos de webhooks');
+      if (!entry || Date.now() - entry.createdTimestamp >= 10_000 || this.isTrusted(guild, entry.executorId, settings)) continue;
+      const count = this.trackAction(
+        guild.id,
+        entry.executorId,
+        'webhook',
+        settings.destructiveWindowSeconds * 1_000,
+      );
+      if (count >= settings.destructiveThreshold) {
+        await this.punishExecutor(guild, entry.executorId, 'cambios masivos de webhooks', settings);
       }
       break;
     }

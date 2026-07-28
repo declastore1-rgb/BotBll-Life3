@@ -7,7 +7,6 @@ import {
   MessageFlags,
   PermissionFlagsBits,
 } from 'discord.js';
-import { config } from './config.js';
 
 const PANEL_COLOR = 0x2b2d31;
 const TICKET_PREFIX = 'ticket-owner:';
@@ -18,27 +17,23 @@ export const ticketIds = Object.freeze({
   close: 'ticket:close',
 });
 
-export function buildPanel() {
+export function buildPanel(settings) {
   const embed = new EmbedBuilder()
     .setColor(PANEL_COLOR)
-    .setTitle('BLL $ LIFE - Ticket')
-    .setDescription(
-      '🇪🇸 · ¡Hola! Usa los botones de abajo para abrir un ticket de soporte o ver información adicional del servidor.\n\n' +
-        '🇺🇸 · Hello! Use the buttons below to open a support ticket or view additional server information.\n\n' +
-        '🇧🇷 · Olá! Use os botões abaixo para abrir um ticket de suporte ou visualizar informações adicionais do servidor.',
-    )
-    .setFooter({ text: 'Copyright Team Bll $ Life' })
+    .setTitle(settings.panelTitle)
+    .setDescription(settings.panelDescription)
+    .setFooter({ text: settings.footerText })
     .setTimestamp();
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(ticketIds.create)
-      .setLabel('Abrir ticket')
+      .setLabel(settings.createButtonLabel)
       .setEmoji('🎫')
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId(ticketIds.info)
-      .setLabel('Información')
+      .setLabel(settings.infoButtonLabel)
       .setEmoji('ℹ️')
       .setStyle(ButtonStyle.Secondary),
   );
@@ -46,9 +41,10 @@ export function buildPanel() {
   return { embeds: [embed], components: [row] };
 }
 
-async function resolveCategory(guild) {
-  if (config.ticketCategoryId) {
-    const configured = guild.channels.cache.get(config.ticketCategoryId);
+async function resolveCategory(guild, settings) {
+  if (settings.categoryId) {
+    const configured = guild.channels.cache.get(settings.categoryId)
+      ?? await guild.channels.fetch(settings.categoryId).catch(() => null);
     if (configured?.type === ChannelType.GuildCategory) return configured;
   }
 
@@ -60,7 +56,7 @@ async function resolveCategory(guild) {
   return guild.channels.create({
     name: 'TICKETS',
     type: ChannelType.GuildCategory,
-    reason: 'Categoria automatica para el sistema de tickets',
+    reason: 'Categoría automática para el sistema de tickets',
   });
 }
 
@@ -75,24 +71,39 @@ function ticketName(user) {
   return `ticket-${safeName}-${user.id.slice(-4)}`;
 }
 
-export async function createTicket(interaction) {
+async function sendTicketLog(guild, settings, title, description, color) {
+  if (!settings.logChannelId) return;
+  const channel = guild.channels.cache.get(settings.logChannelId);
+  if (!channel?.isTextBased()) return;
+  const embed = new EmbedBuilder()
+    .setColor(color)
+    .setTitle(title)
+    .setDescription(description)
+    .setFooter({ text: settings.footerText })
+    .setTimestamp();
+  await channel.send({ embeds: [embed] }).catch(console.error);
+}
+
+export async function createTicket(interaction, store) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const guild = interaction.guild;
+  const settings = store.getGuildSettings(guild.id).tickets;
+  if (!settings.enabled) {
+    await interaction.editReply('El sistema de tickets está desactivado temporalmente.');
+    return;
+  }
+
   const duplicate = guild.channels.cache.find(
     (channel) => channel.topic === `${TICKET_PREFIX}${interaction.user.id}`,
   );
-
   if (duplicate) {
     await interaction.editReply(`Ya tienes un ticket abierto: ${duplicate}`);
     return;
   }
 
-  const category = await resolveCategory(guild);
+  const category = await resolveCategory(guild, settings);
   const overwrites = [
-    {
-      id: guild.roles.everyone.id,
-      deny: [PermissionFlagsBits.ViewChannel],
-    },
+    { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
     {
       id: interaction.user.id,
       allow: [
@@ -113,9 +124,9 @@ export async function createTicket(interaction) {
     },
   ];
 
-  if (config.supportRoleId && guild.roles.cache.has(config.supportRoleId)) {
+  if (settings.supportRoleId && guild.roles.cache.has(settings.supportRoleId)) {
     overwrites.push({
-      id: config.supportRoleId,
+      id: settings.supportRoleId,
       allow: [
         PermissionFlagsBits.ViewChannel,
         PermissionFlagsBits.SendMessages,
@@ -140,9 +151,8 @@ export async function createTicket(interaction) {
       `${interaction.user}, describe tu consulta con todos los detalles posibles.\n` +
         'El equipo de soporte responderá tan pronto como sea posible.',
     )
-    .setFooter({ text: 'Copyright Team Bll $ Life' })
+    .setFooter({ text: settings.footerText })
     .setTimestamp();
-
   const closeRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(ticketIds.close)
@@ -150,10 +160,8 @@ export async function createTicket(interaction) {
       .setEmoji('🔒')
       .setStyle(ButtonStyle.Danger),
   );
-
-  const supportMention = config.supportRoleId && guild.roles.cache.has(config.supportRoleId)
-    ? `<@&${config.supportRoleId}>`
-    : 'Equipo de soporte';
+  const hasSupportRole = settings.supportRoleId && guild.roles.cache.has(settings.supportRoleId);
+  const supportMention = hasSupportRole ? `<@&${settings.supportRoleId}>` : 'Equipo de soporte';
 
   await channel.send({
     content: `${interaction.user} · ${supportMention}`,
@@ -161,14 +169,22 @@ export async function createTicket(interaction) {
     components: [closeRow],
     allowedMentions: {
       users: [interaction.user.id],
-      roles: config.supportRoleId ? [config.supportRoleId] : [],
+      roles: hasSupportRole ? [settings.supportRoleId] : [],
     },
   });
+  await sendTicketLog(
+    guild,
+    settings,
+    'Ticket abierto',
+    `${interaction.user} abrió ${channel}.`,
+    0x57f287,
+  );
   await interaction.editReply(`Tu ticket fue creado: ${channel}`);
 }
 
-export async function showServerInfo(interaction) {
+export async function showServerInfo(interaction, store) {
   const guild = interaction.guild;
+  const settings = store.getGuildSettings(guild.id).tickets;
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle(`Información de ${guild.name}`)
@@ -178,17 +194,17 @@ export async function showServerInfo(interaction) {
       { name: 'Creado', value: `<t:${Math.floor(guild.createdTimestamp / 1_000)}:D>`, inline: true },
       { name: 'ID', value: guild.id, inline: true },
     )
-    .setFooter({ text: 'Copyright Team Bll $ Life' });
-
+    .setFooter({ text: settings.footerText });
   await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
-export async function closeTicket(interaction) {
+export async function closeTicket(interaction, store) {
   const ownerId = interaction.channel?.topic?.startsWith(TICKET_PREFIX)
     ? interaction.channel.topic.slice(TICKET_PREFIX.length)
     : null;
+  const settings = store.getGuildSettings(interaction.guildId).tickets;
   const member = interaction.member;
-  const isSupport = config.supportRoleId && member.roles.cache.has(config.supportRoleId);
+  const isSupport = settings.supportRoleId && member.roles.cache.has(settings.supportRoleId);
   const isAdministrator = member.permissions.has(PermissionFlagsBits.Administrator);
 
   if (!ownerId) {
@@ -203,8 +219,72 @@ export async function closeTicket(interaction) {
     return;
   }
 
-  await interaction.reply('🔒 El ticket se cerrará en 3 segundos.');
+  await interaction.reply('El ticket se cerrará en 3 segundos.');
+  await sendTicketLog(
+    interaction.guild,
+    settings,
+    'Ticket cerrado',
+    `<@${interaction.user.id}> cerró **#${interaction.channel.name}**.`,
+    0xed4245,
+  );
   setTimeout(() => {
     interaction.channel.delete(`Ticket cerrado por ${interaction.user.tag}`).catch(console.error);
   }, 3_000);
+}
+
+export async function syncOpenTicketPermissions(guild, previousRoleId, nextRoleId) {
+  if (!previousRoleId && !nextRoleId) return { updated: 0, failed: 0 };
+  const channels = guild.channels.cache.filter(
+    (channel) => channel.type === ChannelType.GuildText && channel.topic?.startsWith(TICKET_PREFIX),
+  );
+  const updated = [];
+  let currentChannel = null;
+
+  try {
+    for (const channel of channels.values()) {
+      currentChannel = channel;
+      if (previousRoleId && previousRoleId !== nextRoleId) {
+        await channel.permissionOverwrites.delete(
+          previousRoleId,
+          'Rol de soporte actualizado desde el dashboard',
+        );
+      }
+      if (nextRoleId) {
+        await channel.permissionOverwrites.edit(
+          nextRoleId,
+          {
+            ViewChannel: true,
+            SendMessages: true,
+            ReadMessageHistory: true,
+          },
+          { reason: 'Rol de soporte actualizado desde el dashboard' },
+        );
+      }
+      updated.push(channel);
+      currentChannel = null;
+    }
+    return { updated: updated.length, failed: 0 };
+  } catch (error) {
+    const rollbackChannels = currentChannel ? [...updated, currentChannel] : updated;
+    await Promise.allSettled(rollbackChannels.map(async (channel) => {
+      if (nextRoleId && nextRoleId !== previousRoleId) {
+        await channel.permissionOverwrites.delete(
+          nextRoleId,
+          'Rollback del rol de soporte',
+        ).catch(() => null);
+      }
+      if (previousRoleId) {
+        await channel.permissionOverwrites.edit(
+          previousRoleId,
+          {
+            ViewChannel: true,
+            SendMessages: true,
+            ReadMessageHistory: true,
+          },
+          { reason: 'Rollback del rol de soporte' },
+        );
+      }
+    }));
+    throw new Error(`No se pudieron sincronizar los tickets abiertos: ${error.message}`);
+  }
 }

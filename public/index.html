@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090b12">
+  <title>BLL $ LIFE · Control Center</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+
+  <main id="login-view" class="login-shell">
+    <section class="login-card">
+      <div class="brand-mark large">BL</div>
+      <div class="eyebrow">SECURITY CONSOLE</div>
+      <h1>BLL <span>$</span> LIFE</h1>
+      <p class="muted login-copy">Administra la seguridad y el soporte de tu comunidad desde un solo lugar.</p>
+      <form id="login-form" class="stack" autocomplete="on">
+        <label class="field">
+          <span>Usuario</span>
+          <input name="username" value="Linox" autocomplete="username" required maxlength="32">
+        </label>
+        <label class="field">
+          <span>Contraseña</span>
+          <div class="password-wrap">
+            <input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="128">
+            <button class="icon-button" type="button" data-toggle-password="login-password" aria-label="Mostrar contraseña">Ver</button>
+          </div>
+        </label>
+        <p id="login-error" class="form-error hidden"></p>
+        <button id="login-submit" class="button primary wide" type="submit">
+          <span>Entrar al panel</span><span class="arrow">→</span>
+        </button>
+      </form>
+      <div class="secure-note"><span class="pulse-dot"></span> Acceso cifrado y protegido</div>
+    </section>
+  </main>
+
+  <div id="app-view" class="app-shell hidden">
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-mark">BL</div>
+        <div><strong>BLL $ LIFE</strong><small>Control Center</small></div>
+      </div>
+      <nav class="nav-list" aria-label="Navegación principal">
+        <button class="nav-item active" data-page="overview"><span class="nav-icon">◈</span><span>Resumen</span></button>
+        <button class="nav-item" data-page="antiraid" data-permission="antiraid"><span class="nav-icon">◇</span><span>Anti-Raid</span></button>
+        <button class="nav-item" data-page="tickets" data-permission="tickets"><span class="nav-icon">▱</span><span>Tickets</span></button>
+        <button class="nav-item" data-page="users" data-permission="users"><span class="nav-icon">◎</span><span>Usuarios</span></button>
+        <button class="nav-item" data-page="account"><span class="nav-icon">○</span><span>Mi cuenta</span></button>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="system-status"><span id="sidebar-status-dot" class="status-dot"></span><div><strong id="sidebar-status">Conectando</strong><small>Discord Gateway</small></div></div>
+        <button id="logout-button" class="button ghost wide" type="button">Cerrar sesión</button>
+      </div>
+    </aside>
+    <button id="sidebar-backdrop" class="sidebar-backdrop hidden" aria-label="Cerrar menú"></button>
+
+    <div class="workspace">
+      <header class="topbar">
+        <button id="menu-button" class="menu-button" type="button" aria-label="Abrir menú">☰</button>
+        <div><div class="eyebrow">PANEL ADMINISTRATIVO</div><h2 id="page-title">Resumen</h2></div>
+        <div class="topbar-user"><div><strong id="current-username">—</strong><small id="current-role">Operador</small></div><div id="user-avatar" class="user-avatar">L</div></div>
+      </header>
+
+      <div class="content">
+        <section id="page-overview" class="page active">
+          <div class="hero-card">
+            <div><div class="eyebrow">ESTADO GENERAL</div><h3>Todo bajo control<span class="accent-dot">.</span></h3><p id="hero-description" class="muted">Sincronizando con Discord...</p></div>
+            <div class="shield-visual"><div class="shield-ring"></div><div class="shield-core">BLL</div></div>
+          </div>
+          <div class="stats-grid">
+            <article class="stat-card"><span class="stat-label">Anti-Raid</span><strong id="stat-antiraid">—</strong><small id="stat-raidmode">Comprobando</small></article>
+            <article class="stat-card"><span class="stat-label">Tickets abiertos</span><strong id="stat-tickets">0</strong><small>Canales activos</small></article>
+            <article class="stat-card"><span class="stat-label">Miembros</span><strong id="stat-members">0</strong><small id="stat-guild">Servidor</small></article>
+            <article class="stat-card"><span class="stat-label">Usuarios del panel</span><strong id="stat-users">0</strong><small>Accesos configurados</small></article>
+          </div>
+          <div class="two-column">
+            <article class="panel-card">
+              <div class="card-header"><div><div class="eyebrow">BOT</div><h3>Conexión de Discord</h3></div><span id="bot-badge" class="badge neutral">Conectando</span></div>
+              <div class="bot-profile"><img id="bot-avatar" class="bot-avatar hidden" alt="Avatar del bot"><div><strong id="bot-name">BLL Bot</strong><p id="bot-ping" class="muted">Ping: —</p></div></div>
+            </article>
+            <article class="panel-card">
+              <div class="card-header"><div><div class="eyebrow">ACTIVIDAD</div><h3>Últimos cambios</h3></div><button class="text-button" data-refresh="overview">Actualizar</button></div>
+              <div id="audit-list" class="activity-list"><p class="empty-state">Aún no hay actividad.</p></div>
+            </article>
+          </div>
+        </section>
+
+        <section id="page-antiraid" class="page">
+          <div class="section-heading"><div><div class="eyebrow">PROTECCIÓN EN TIEMPO REAL</div><h3>Sistema Anti-Raid</h3><p class="muted">Ajusta los límites sin reiniciar el bot.</p></div><span id="antiraid-live-badge" class="badge neutral">Cargando</span></div>
+          <form id="antiraid-form" class="panel-card settings-form">
+            <div class="setting-row featured"><div><strong>Protección principal</strong><p>Activa todos los detectores y sanciones automáticas.</p></div><label class="switch"><input name="enabled" type="checkbox"><span></span></label></div>
+            <div class="form-grid three">
+              <label class="field"><span>Sanción automática</span><select name="action"><option value="ban">Banear</option><option value="kick">Expulsar</option><option value="timeout">Aislar (timeout)</option></select></label>
+              <label class="field"><span>Entradas máximas</span><input name="joinThreshold" type="number" min="2" max="100" required></label>
+              <label class="field"><span>Ventana de entradas (s)</span><input name="joinWindowSeconds" type="number" min="1" max="300" required></label>
+              <label class="field"><span>Duración modo raid (min)</span><input name="raidModeMinutes" type="number" min="1" max="1440" required></label>
+              <label class="field"><span>Edad mínima de cuenta (h)</span><input name="minAccountAgeHours" type="number" min="0" max="8760" required></label>
+              <label class="field"><span>Menciones máximas</span><input name="massMentionThreshold" type="number" min="2" max="100" required></label>
+              <label class="field"><span>Mensajes para detectar spam</span><input name="spamMessageThreshold" type="number" min="3" max="100" required></label>
+              <label class="field"><span>Ventana de spam (s)</span><input name="spamWindowSeconds" type="number" min="1" max="300" required></label>
+              <label class="field"><span>Acciones destructivas</span><input name="destructiveThreshold" type="number" min="2" max="50" required></label>
+              <label class="field"><span>Ventana destructiva (s)</span><input name="destructiveWindowSeconds" type="number" min="1" max="300" required></label>
+              <label class="field"><span>Duración timeout (min)</span><input name="timeoutMinutes" type="number" min="1" max="40320" required></label>
+            </div>
+            <label class="field"><span>Lista blanca · IDs separados por coma</span><textarea name="trustedUserIds" rows="3" placeholder="123456789012345678, 987654321098765432"></textarea><small>El dueño del servidor y el bot siempre están protegidos.</small></label>
+            <div class="form-actions"><span id="antiraid-save-state" class="save-state"></span><button class="button primary" type="submit">Guardar Anti-Raid</button></div>
+          </form>
+        </section>
+
+        <section id="page-tickets" class="page">
+          <div class="section-heading"><div><div class="eyebrow">SOPORTE</div><h3>Sistema de Tickets</h3><p class="muted">Configura permisos, apariencia y publica el panel.</p></div></div>
+          <form id="tickets-form" class="panel-card settings-form">
+            <div class="setting-row featured"><div><strong>Sistema de tickets</strong><p>Permite que los miembros abran nuevos canales privados.</p></div><label class="switch"><input name="enabled" type="checkbox"><span></span></label></div>
+            <div class="form-grid two">
+              <label class="field"><span>Categoría de tickets</span><select name="categoryId"><option value="">Creación automática</option></select></label>
+              <label class="field"><span>Rol de soporte</span><select name="supportRoleId"><option value="">Sin rol específico</option></select></label>
+              <label class="field"><span>Canal de logs</span><select name="logChannelId"><option value="">Sin logs</option></select></label>
+              <label class="field"><span>Rol autorizado para comandos</span><select name="commandRoleId" required></select><small>Solo este rol podrá usar /panel y /antiraid.</small></label>
+            </div>
+            <div class="divider"></div>
+            <div class="form-grid two">
+              <label class="field"><span>Título del panel</span><input name="panelTitle" maxlength="256" required></label>
+              <label class="field"><span>Texto del footer</span><input name="footerText" maxlength="2048" required></label>
+              <label class="field"><span>Botón para crear</span><input name="createButtonLabel" maxlength="80" required></label>
+              <label class="field"><span>Botón de información</span><input name="infoButtonLabel" maxlength="80" required></label>
+            </div>
+            <label class="field"><span>Descripción del panel</span><textarea name="panelDescription" rows="8" maxlength="4000" required></textarea></label>
+            <div class="form-actions"><span id="tickets-save-state" class="save-state"></span><button class="button primary" type="submit">Guardar Tickets</button></div>
+          </form>
+          <article class="panel-card publish-card">
+            <div><div class="eyebrow">PUBLICAR</div><h3>Enviar panel al servidor</h3><p class="muted">Selecciona el canal donde aparecerá el embed.</p></div>
+            <div class="publish-controls"><select id="publish-channel"><option value="">Selecciona un canal</option></select><button id="publish-button" class="button secondary" type="button">Publicar panel</button></div>
+          </article>
+        </section>
+
+        <section id="page-users" class="page">
+          <div class="section-heading"><div><div class="eyebrow">CONTROL DE ACCESO</div><h3>Usuarios del Dashboard</h3><p class="muted">Crea accesos separados para cada responsabilidad.</p></div><button id="new-user-button" class="button primary" type="button">Nuevo usuario</button></div>
+          <div id="users-grid" class="users-grid"></div>
+        </section>
+
+        <section id="page-account" class="page">
+          <div class="section-heading"><div><div class="eyebrow">SEGURIDAD PERSONAL</div><h3>Mi cuenta</h3><p class="muted">Actualiza tu contraseña de acceso al panel.</p></div></div>
+          <form id="password-form" class="panel-card compact-form">
+            <label class="field"><span>Contraseña actual</span><input name="currentPassword" type="password" autocomplete="current-password" required></label>
+            <label class="field"><span>Nueva contraseña</span><input name="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required><small>Usa una contraseña larga y única. La contraseña “12” es insegura.</small></label>
+            <label class="field"><span>Repetir nueva contraseña</span><input name="confirmPassword" type="password" autocomplete="new-password" required></label>
+            <div class="form-actions"><button class="button primary" type="submit">Cambiar contraseña</button></div>
+          </form>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <dialog id="user-dialog" class="modal">
+    <form id="user-form" method="dialog">
+      <div class="modal-header"><div><div class="eyebrow">ACCESO DEL DASHBOARD</div><h3 id="user-dialog-title">Nuevo usuario</h3></div><button class="icon-button modal-close" type="button" aria-label="Cerrar">×</button></div>
+      <input name="id" type="hidden">
+      <div class="form-grid two">
+        <label class="field"><span>Usuario</span><input name="username" pattern="[a-zA-Z0-9_.-]{3,32}" required></label>
+        <label class="field"><span>Contraseña</span><input name="password" type="password" minlength="8" maxlength="128"><small id="password-help">Obligatoria al crear.</small></label>
+      </div>
+      <label class="check-row admin-check"><input name="isAdmin" type="checkbox"><span><strong>Acceso total</strong><small>Puede gestionar todas las secciones y usuarios.</small></span></label>
+      <fieldset id="permission-fieldset"><legend>Permisos específicos</legend>
+        <div class="permission-grid">
+          <label class="check-card"><input name="permissions" type="checkbox" value="antiraid"><span><strong>Anti-Raid</strong><small>Ver y modificar protección.</small></span></label>
+          <label class="check-card"><input name="permissions" type="checkbox" value="tickets"><span><strong>Tickets</strong><small>Configurar y publicar panel.</small></span></label>
+          <label class="check-card"><input name="permissions" type="checkbox" value="users"><span><strong>Usuarios</strong><small>Crear y editar accesos.</small></span></label>
+        </div>
+      </fieldset>
+      <label id="disabled-row" class="check-row hidden"><input name="disabled" type="checkbox"><span><strong>Cuenta desactivada</strong><small>Impide iniciar nuevas sesiones.</small></span></label>
+      <p id="user-form-error" class="form-error hidden"></p>
+      <div class="form-actions"><button class="button ghost modal-cancel" type="button">Cancelar</button><button class="button primary" type="submit">Guardar usuario</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+</body>
+</html>

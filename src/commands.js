@@ -1,14 +1,9 @@
-import {
-  ChannelType,
-  PermissionFlagsBits,
-  SlashCommandBuilder,
-} from 'discord.js';
+import { ChannelType, SlashCommandBuilder } from 'discord.js';
 
 export const commands = [
   new SlashCommandBuilder()
     .setName('panel')
     .setDescription('Administra el panel de tickets.')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .setDMPermission(false)
     .addSubcommand((subcommand) =>
       subcommand
@@ -17,17 +12,16 @@ export const commands = [
         .addChannelOption((option) =>
           option
             .setName('canal')
-            .setDescription('Canal donde se publicara el panel.')
+            .setDescription('Canal donde se publicará el panel.')
             .addChannelTypes(ChannelType.GuildText)
             .setRequired(false),
         ),
     ),
   new SlashCommandBuilder()
     .setName('antiraid')
-    .setDescription('Muestra el estado de la proteccion anti-raid.')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .setDescription('Muestra el estado de la protección anti-raid.')
     .setDMPermission(false)
     .addSubcommand((subcommand) =>
-      subcommand.setName('status').setDescription('Muestra el estado y los limites activos.'),
+      subcommand.setName('status').setDescription('Muestra el estado y los límites activos.'),
     ),
 ].map((command) => command.toJSON());
