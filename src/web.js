@@ -23,7 +23,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, '..', 'public');
-const DASHBOARD_VERSION = 'tickets-ui-20260727-4';
+const DASHBOARD_VERSION = 'tickets-ui-20260728-5';
 const loginAttempts = new Map();
 const SNOWFLAKE = /^\d{17,20}$/;
 const HEX_COLOR = /^#[0-9A-F]{6}$/i;

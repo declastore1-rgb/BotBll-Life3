@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090b12">
-  <meta name="app-version" content="tickets-ui-20260727-4">
+  <meta name="app-version" content="tickets-ui-20260728-5">
   <title>BLL $ LIFE · Control Center</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=20260727-4">
-  <script src="/assets/app.js?v=20260727-4" defer></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=20260728-5">
+  <script src="/assets/app.js?v=20260728-5" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -193,10 +193,10 @@
             <div><div class="eyebrow">BOTONES PRINCIPALES</div><p class="muted helper-copy">Discord ofrece azul, gris, verde y rojo para botones interactivos.</p></div>
             <div class="form-grid two">
               <label class="field"><span>Texto · Abrir ticket</span><input name="createButtonLabel" maxlength="80" required></label>
-              <label class="field color-field ticket-button-color-field"><span>Color · Abrir ticket</span><select class="ticket-button-style-select" name="createButtonStyle" aria-label="Color del botón Abrir ticket"><option value="primary">Azul</option><option value="secondary">Gris</option><option value="success">Verde</option><option value="danger">Rojo</option></select><small>Discord lo ajustará a uno de sus cuatro colores disponibles.</small></label>
+              <label class="field color-field ticket-button-color-field"><span>Color · Abrir ticket</span><select class="ticket-button-style-select" name="createButtonStyle" aria-label="Color del botón Abrir ticket"><option value="primary">Azul</option><option value="secondary">Gris</option><option value="success">Verde</option><option value="danger">Rojo</option></select><small>El color elegido se guardará sin restablecerse.</small></label>
               <div class="emoji-field" data-emoji-field="createButtonEmoji"><label class="field" data-emoji-custom><span>Emoji · Abrir ticket</span><select class="emoji-native-select" aria-label="Emoji del servidor para abrir ticket"><option value="">Sin emoji</option></select></label></div>
               <label class="field"><span>Texto · Información</span><input name="infoButtonLabel" maxlength="80" required></label>
-              <label class="field color-field ticket-button-color-field"><span>Color · Información</span><select class="ticket-button-style-select" name="infoButtonStyle" aria-label="Color del botón Información"><option value="primary">Azul</option><option value="secondary">Gris</option><option value="success">Verde</option><option value="danger">Rojo</option></select><small>Discord lo ajustará a uno de sus cuatro colores disponibles.</small></label>
+              <label class="field color-field ticket-button-color-field"><span>Color · Información</span><select class="ticket-button-style-select" name="infoButtonStyle" aria-label="Color del botón Información"><option value="primary">Azul</option><option value="secondary">Gris</option><option value="success">Verde</option><option value="danger">Rojo</option></select><small>El color elegido se guardará sin restablecerse.</small></label>
               <div class="emoji-field" data-emoji-field="infoButtonEmoji"><label class="field" data-emoji-custom><span>Emoji · Información</span><select class="emoji-native-select" aria-label="Emoji del servidor para información"><option value="">Sin emoji</option></select></label></div>
             </div>
             <div class="extra-buttons-section">
@@ -285,7 +285,7 @@
       <div class="form-grid two">
         <label class="field"><span>Etiqueta</span><input name="label" maxlength="80" required placeholder="Reglas"></label>
         <label class="field"><span>Acción</span><select name="type"><option value="response">Respuesta privada</option><option value="link">Abrir enlace</option></select></label>
-        <label id="extra-style-field" class="field color-field ticket-button-color-field"><span>Color</span><select class="ticket-button-style-select" name="style" aria-label="Color del botón adicional"><option value="primary">Azul</option><option value="secondary">Gris</option><option value="success">Verde</option><option value="danger">Rojo</option></select><small>Discord lo ajustará a uno de sus cuatro colores disponibles.</small></label>
+        <label id="extra-style-field" class="field color-field ticket-button-color-field"><span>Color</span><select class="ticket-button-style-select" name="style" aria-label="Color del botón adicional"><option value="primary">Azul</option><option value="secondary">Gris</option><option value="success">Verde</option><option value="danger">Rojo</option></select><small>El color elegido se guardará sin restablecerse.</small></label>
         <div class="emoji-field modal-emoji-field" data-emoji-field="extraButtonEmoji"><label class="field" data-emoji-custom><span>Emoji del servidor</span><select class="emoji-native-select" aria-label="Emoji del servidor para el botón adicional"><option value="">Sin emoji</option></select></label></div>
       </div>
       <label class="field"><span id="extra-value-label">Mensaje privado</span><textarea name="value" rows="5" maxlength="2000" required placeholder="Contenido que verá el usuario..."></textarea><small id="extra-value-help">Se mostrará únicamente al usuario que pulse el botón.</small></label>

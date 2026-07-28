@@ -431,35 +431,38 @@ const ticketButtonStyles = {
   success: { label: 'Verde', color: '#248046' },
   danger: { label: 'Rojo', color: '#DA373C' },
 };
-const ticketStyleLabels = {
-  ...Object.fromEntries(Object.entries(ticketButtonStyles).map(([style, value]) => [style, value.label])),
-  link: 'Enlace',
-};
 
-function colorDistance(left, right) {
-  const channels = (color) => [1, 3, 5].map((index) => Number.parseInt(color.slice(index, index + 2), 16));
-  const [leftRed, leftGreen, leftBlue] = channels(left);
-  const [rightRed, rightGreen, rightBlue] = channels(right);
-  return (leftRed - rightRed) ** 2 + (leftGreen - rightGreen) ** 2 + (leftBlue - rightBlue) ** 2;
-}
+function discordStyleForColor(color) {
+  const [red, green, blue] = [1, 3, 5].map((index) => Number.parseInt(color.slice(index, index + 2), 16) / 255);
+  const maximum = Math.max(red, green, blue);
+  const minimum = Math.min(red, green, blue);
+  const delta = maximum - minimum;
+  const lightness = (maximum + minimum) / 2;
+  const saturation = delta === 0 ? 0 : delta / (1 - Math.abs((2 * lightness) - 1));
+  if (saturation < 0.2) return 'secondary';
 
-function nearestTicketButtonStyle(color) {
-  return Object.entries(ticketButtonStyles).reduce((nearest, [style, option]) => (
-    colorDistance(color, option.color) < colorDistance(color, ticketButtonStyles[nearest].color) ? style : nearest
-  ), 'primary');
+  let hue;
+  if (maximum === red) hue = 60 * (((green - blue) / delta) % 6);
+  else if (maximum === green) hue = 60 * (((blue - red) / delta) + 2);
+  else hue = 60 * (((red - green) / delta) + 4);
+  if (hue < 0) hue += 360;
+  if (hue < 20 || hue >= 300) return 'danger';
+  if (hue < 170) return 'success';
+  return 'primary';
 }
 
 function syncTicketButtonColorPicker(select, color) {
   const picker = select?._ticketButtonColorPicker;
   if (!picker) return;
-  const style = ticketButtonStyles[select.value] ? select.value : 'primary';
-  const fallback = ticketButtonStyles[style].color;
+  const fallback = ticketButtonStyles[select.value]?.color ?? ticketButtonStyles.primary.color;
   const selectedColor = /^#[0-9A-F]{6}$/i.test(color ?? '') ? color.toUpperCase() : fallback;
   picker.input.value = selectedColor;
-  picker.code.textContent = `${selectedColor} · ${ticketButtonStyles[style].label}`;
+  picker.code.textContent = selectedColor;
+  select.value = discordStyleForColor(selectedColor);
 }
 
 function ensureTicketButtonColorPicker(select, color) {
+  if (!select) return;
   select.classList.add('ticket-button-style-select');
   if (!select._ticketButtonColorPicker) {
     const control = document.createElement('div');
@@ -475,8 +478,8 @@ function ensureTicketButtonColorPicker(select, color) {
 
     input.addEventListener('input', () => {
       const selectedColor = input.value.toUpperCase();
-      select.value = nearestTicketButtonStyle(selectedColor);
-      code.textContent = `${selectedColor} · ${ticketButtonStyles[select.value].label}`;
+      select.value = discordStyleForColor(selectedColor);
+      code.textContent = selectedColor;
       updateTicketPreview();
     });
     input.addEventListener('change', updateTicketPreview);
@@ -534,11 +537,13 @@ function updateTicketPreview() {
     {
       label: form.elements.createButtonLabel.value || 'Abrir ticket',
       style: form.elements.createButtonStyle.value,
+      color: form.elements.createButtonColor?.value.toUpperCase(),
       emoji: readEmojiField('createButtonEmoji'),
     },
     {
       label: form.elements.infoButtonLabel.value || 'Información',
       style: form.elements.infoButtonStyle.value,
+      color: form.elements.infoButtonColor?.value.toUpperCase(),
       emoji: readEmojiField('infoButtonEmoji'),
     },
     ...state.extraButtons,
@@ -546,6 +551,9 @@ function updateTicketPreview() {
   $('#preview-buttons').replaceChildren(...buttons.map((button) => {
     const element = document.createElement('span');
     element.className = `discord-button ${button.style}`;
+    if (button.style !== 'link' && /^#[0-9A-F]{6}$/i.test(button.color ?? '')) {
+      element.style.backgroundColor = button.color;
+    }
     appendEmojiLabel(element, button.emoji, button.label);
     return element;
   }));
@@ -567,7 +575,7 @@ function renderExtraButtons() {
     const detail = document.createElement('small');
     detail.textContent = button.type === 'link'
       ? `Enlace · ${button.value}`
-      : `Respuesta privada · ${ticketStyleLabels[button.style]}`;
+      : `Respuesta privada · ${(button.color ?? ticketButtonStyles[button.style]?.color ?? '#4E5058').toUpperCase()}`;
     summary.append(title, detail);
     const actions = document.createElement('div'); actions.className = 'inline-actions';
     const edit = document.createElement('button');
@@ -1027,17 +1035,18 @@ $('#clear-automod-strikes').addEventListener('click', async (event) => {
 $('#tickets-form').addEventListener('input', updateTicketPreview);
 $('#tickets-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  const button = event.currentTarget.querySelector('[type="submit"]');
+  const form = event.currentTarget;
+  const button = form.querySelector('[type="submit"]');
   setButtonBusy(button, true, 'Guardando...');
   try {
-    const body = formObject(event.currentTarget);
+    const body = formObject(form);
     body.createButtonEmoji = readEmojiField('createButtonEmoji');
     body.infoButtonEmoji = readEmojiField('infoButtonEmoji');
     body.extraButtons = state.extraButtons;
     const result = await api('/api/tickets', { method: 'PATCH', body });
     state.extraButtons = structuredClone(result.settings.extraButtons ?? []);
-    syncTicketButtonColorPicker(event.currentTarget.elements.createButtonStyle, result.settings.createButtonColor);
-    syncTicketButtonColorPicker(event.currentTarget.elements.infoButtonStyle, result.settings.infoButtonColor);
+    syncTicketButtonColorPicker(form.elements.createButtonStyle, result.settings.createButtonColor);
+    syncTicketButtonColorPicker(form.elements.infoButtonStyle, result.settings.infoButtonColor);
     setEmojiField('createButtonEmoji', result.settings.createButtonEmoji);
     setEmojiField('infoButtonEmoji', result.settings.infoButtonEmoji);
     renderExtraButtons();
