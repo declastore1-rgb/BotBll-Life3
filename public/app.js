@@ -449,22 +449,24 @@ function nearestTicketButtonStyle(color) {
   ), 'primary');
 }
 
-function syncTicketButtonColorPicker(select) {
+function syncTicketButtonColorPicker(select, color) {
   const picker = select?._ticketButtonColorPicker;
   if (!picker) return;
   const style = ticketButtonStyles[select.value] ? select.value : 'primary';
-  const option = ticketButtonStyles[style];
-  picker.input.value = option.color;
-  picker.code.textContent = `${option.color} · ${option.label}`;
+  const fallback = ticketButtonStyles[style].color;
+  const selectedColor = /^#[0-9A-F]{6}$/i.test(color ?? '') ? color.toUpperCase() : fallback;
+  picker.input.value = selectedColor;
+  picker.code.textContent = `${selectedColor} · ${ticketButtonStyles[style].label}`;
 }
 
-function ensureTicketButtonColorPicker(select) {
+function ensureTicketButtonColorPicker(select, color) {
   select.classList.add('ticket-button-style-select');
   if (!select._ticketButtonColorPicker) {
     const control = document.createElement('div');
     control.className = 'ticket-button-color-control';
     const input = document.createElement('input');
     input.type = 'color';
+    input.name = select.name === 'style' ? 'color' : select.name.replace(/Style$/, 'Color');
     input.setAttribute('aria-label', select.getAttribute('aria-label') || 'Elegir color del botón');
     const code = document.createElement('code');
     control.append(input, code);
@@ -472,31 +474,33 @@ function ensureTicketButtonColorPicker(select) {
     select._ticketButtonColorPicker = { control, input, code };
 
     input.addEventListener('input', () => {
-      select.value = nearestTicketButtonStyle(input.value.toUpperCase());
-      code.textContent = `${input.value.toUpperCase()} · ${ticketButtonStyles[select.value].label}`;
+      const selectedColor = input.value.toUpperCase();
+      select.value = nearestTicketButtonStyle(selectedColor);
+      code.textContent = `${selectedColor} · ${ticketButtonStyles[select.value].label}`;
       updateTicketPreview();
     });
-    input.addEventListener('change', () => {
-      syncTicketButtonColorPicker(select);
-      updateTicketPreview();
-    });
+    input.addEventListener('change', updateTicketPreview);
   }
-  syncTicketButtonColorPicker(select);
+  syncTicketButtonColorPicker(select, color);
 }
 
-function initializeTicketButtonColorPickers() {
-  [
+function initializeTicketButtonColorPickers(settings) {
+  ensureTicketButtonColorPicker(
     $('#tickets-form [name="createButtonStyle"]'),
+    settings.createButtonColor,
+  );
+  ensureTicketButtonColorPicker(
     $('#tickets-form [name="infoButtonStyle"]'),
-    $('#extra-button-form [name="style"]'),
-  ].forEach(ensureTicketButtonColorPicker);
+    settings.infoButtonColor,
+  );
+  ensureTicketButtonColorPicker($('#extra-button-form [name="style"]'));
 }
 
 async function loadTickets() {
   const [data, resources] = await Promise.all([api('/api/tickets'), getResources()]);
   state.extraButtons = structuredClone(data.settings.extraButtons ?? []);
   fillForm($('#tickets-form'), data.settings);
-  initializeTicketButtonColorPickers();
+  initializeTicketButtonColorPickers(data.settings);
   populateSelect($('#tickets-form [name="categoryId"]'), resources.categories, data.settings.categoryId);
   populateSelect($('#tickets-form [name="supportRoleId"]'), resources.roles, data.settings.supportRoleId, '@');
   populateSelect($('#tickets-form [name="logChannelId"]'), resources.channels, data.settings.logChannelId, '#');
@@ -602,7 +606,7 @@ function openExtraButtonDialog(button = null) {
   form.elements.label.value = button?.label ?? '';
   form.elements.type.value = button?.type ?? 'response';
   form.elements.style.value = button?.style === 'link' ? 'secondary' : button?.style ?? 'secondary';
-  syncTicketButtonColorPicker(form.elements.style);
+  syncTicketButtonColorPicker(form.elements.style, button?.color);
   form.elements.value.value = button?.value ?? '';
   setEmojiField('extraButtonEmoji', button?.emoji);
   $('#extra-button-title').textContent = button ? 'Editar botón' : 'Nuevo botón';
@@ -1032,6 +1036,8 @@ $('#tickets-form').addEventListener('submit', async (event) => {
     body.extraButtons = state.extraButtons;
     const result = await api('/api/tickets', { method: 'PATCH', body });
     state.extraButtons = structuredClone(result.settings.extraButtons ?? []);
+    syncTicketButtonColorPicker(event.currentTarget.elements.createButtonStyle, result.settings.createButtonColor);
+    syncTicketButtonColorPicker(event.currentTarget.elements.infoButtonStyle, result.settings.infoButtonColor);
     setEmojiField('createButtonEmoji', result.settings.createButtonEmoji);
     setEmojiField('infoButtonEmoji', result.settings.infoButtonEmoji);
     renderExtraButtons();
@@ -1060,6 +1066,7 @@ $('#extra-button-form').addEventListener('submit', (event) => {
     label: form.elements.label.value.trim(),
     type: form.elements.type.value,
     style: form.elements.type.value === 'link' ? 'link' : form.elements.style.value,
+    color: form.elements.color.value.toUpperCase(),
     value: form.elements.value.value.trim(),
     emoji: readEmojiField('extraButtonEmoji'),
   };
