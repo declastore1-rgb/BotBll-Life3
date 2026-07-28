@@ -11,6 +11,8 @@ const state = {
 const pages = {
   overview: 'Resumen',
   antiraid: 'Anti-Raid',
+  antinuke: 'Anti-Nuke',
+  automod: 'AutoMod',
   tickets: 'Tickets',
   embeds: 'Embeds',
   users: 'Usuarios',
@@ -143,6 +145,8 @@ async function openPage(name) {
   try {
     if (name === 'overview') await loadOverview();
     if (name === 'antiraid') await loadAntiRaid();
+    if (name === 'antinuke') await loadAntiNuke();
+    if (name === 'automod') await loadAutoMod();
     if (name === 'tickets') await loadTickets();
     if (name === 'embeds') await loadEmbeds();
     if (name === 'users') await loadUsers();
@@ -175,6 +179,66 @@ async function loadAntiRaid() {
   const badge = $('#antiraid-live-badge');
   badge.textContent = data.status.raidMode ? 'Modo raid' : data.settings.enabled ? 'Protección activa' : 'Desactivado';
   badge.className = `badge ${data.status.raidMode || !data.settings.enabled ? 'danger' : 'success'}`;
+}
+
+async function loadAntiNuke() {
+  const data = await api('/api/antinuke');
+  fillForm($('#antinuke-form'), data.settings);
+  const badge = $('#antinuke-live-badge');
+    badge.textContent = !data.settings.enabled ? 'Desactivado' : data.settings.emergencyMode ? 'Emergencia' : 'Protección activa';
+  badge.className = `badge ${!data.settings.enabled ? 'neutral' : data.settings.emergencyMode ? 'danger' : 'success'}`;
+  $('#emergency-setting').classList.toggle('active', data.settings.emergencyMode);
+  $('#snapshot-channels').textContent = data.status.snapshots.channels;
+  $('#snapshot-roles').textContent = data.status.snapshots.roles;
+  $('#snapshot-emojis').textContent = data.status.snapshots.emojis;
+  $('#snapshot-date').textContent = data.status.snapshots.capturedAt
+    ? `Última copia: ${new Date(data.status.snapshots.capturedAt).toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' })}`
+    : 'Sin copia registrada.';
+  renderAntiNukeIncidents(data.status.incidents);
+}
+
+function renderAntiNukeIncidents(incidents) {
+  const list = $('#antinuke-incidents');
+  if (!incidents.length) {
+    list.innerHTML = '<p class="empty-state">No hay incidentes.</p>';
+    return;
+  }
+  const resourceLabels = { channel: 'Canal', role: 'Rol', emoji: 'Emoji' };
+  list.replaceChildren(...incidents.map((incident) => {
+    const item = document.createElement('article'); item.className = 'incident-item';
+    const partial = incident.restored && (incident.relationErrors?.length ?? 0) > 0;
+    const icon = document.createElement('span');
+    icon.className = `incident-icon ${partial ? 'partial' : incident.restored ? 'restored' : 'failed'}`;
+    icon.textContent = partial ? '≈' : incident.restored ? '↺' : '!';
+    const content = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = `${resourceLabels[incident.resourceType] ?? 'Recurso'} · ${incident.resourceName}`;
+    const detail = document.createElement('small');
+    const executor = incident.executorId ?? 'desconocido';
+    const responses = [];
+    if (incident.sanctioned) responses.push('sancionado');
+    if (incident.rolesRemoved > 0) responses.push(`${incident.rolesRemoved} rol(es) retirado(s)`);
+    if (incident.rolesError) responses.push(`retirada de roles fallida: ${incident.rolesError}`);
+    if (!responses.length) responses.push('sin sanción');
+    const response = responses.join(' · ');
+    const restoration = partial
+      ? `Recreado parcialmente: ${incident.relationErrors.join(' ')}`
+      : incident.restored ? 'Restaurado completamente' : incident.restoreError || 'Restauración desactivada';
+    detail.textContent = `${restoration} · responsable ${executor} · ${response}`;
+    content.append(title, detail);
+    const time = document.createElement('time');
+    time.textContent = new Date(incident.createdAt).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
+    item.append(icon, content, time);
+    return item;
+  }));
+}
+
+async function loadAutoMod() {
+  const data = await api('/api/automod');
+  fillForm($('#automod-form'), data.settings);
+  const badge = $('#automod-live-badge');
+  badge.textContent = data.settings.enabled ? `${data.status.activeStrikes} usuarios con strikes` : 'Desactivado';
+  badge.className = `badge ${data.settings.enabled ? 'success' : 'neutral'}`;
 }
 
 async function getResources() {
@@ -726,6 +790,56 @@ $('#antiraid-form').addEventListener('submit', async (event) => {
     $('#antiraid-save-state').textContent = 'Cambios aplicados en tiempo real';
     toast('Protección Anti-Raid actualizada.');
     await loadAntiRaid();
+  } catch (error) { toast(error.message, 'error'); }
+  finally { setButtonBusy(button, false); }
+});
+
+$('#antinuke-form [name="emergencyMode"]').addEventListener('change', (event) => {
+  $('#emergency-setting').classList.toggle('active', event.currentTarget.checked);
+});
+$('#antinuke-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('[type="submit"]');
+  setButtonBusy(button, true, 'Guardando...');
+  try {
+    await api('/api/antinuke', { method: 'PATCH', body: formObject(event.currentTarget) });
+    $('#antinuke-save-state').textContent = 'Protección actualizada';
+    toast('Anti-Nuke actualizado.');
+    await loadAntiNuke();
+  } catch (error) { toast(error.message, 'error'); }
+  finally { setButtonBusy(button, false); }
+});
+$('#refresh-security-snapshot').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  setButtonBusy(button, true, 'Actualizando...');
+  try {
+    await api('/api/antinuke/snapshot', { method: 'POST' });
+    toast('Copia de seguridad actualizada.');
+    await loadAntiNuke();
+  } catch (error) { toast(error.message, 'error'); }
+  finally { setButtonBusy(button, false); }
+});
+
+$('#automod-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('[type="submit"]');
+  setButtonBusy(button, true, 'Guardando...');
+  try {
+    await api('/api/automod', { method: 'PATCH', body: formObject(event.currentTarget) });
+    $('#automod-save-state').textContent = 'Filtros actualizados';
+    toast('AutoMod actualizado.');
+    await loadAutoMod();
+  } catch (error) { toast(error.message, 'error'); }
+  finally { setButtonBusy(button, false); }
+});
+$('#clear-automod-strikes').addEventListener('click', async (event) => {
+  if (!confirm('¿Reiniciar todos los strikes activos de AutoMod?')) return;
+  const button = event.currentTarget;
+  setButtonBusy(button, true, 'Reiniciando...');
+  try {
+    await api('/api/automod/strikes', { method: 'DELETE' });
+    toast('Strikes de AutoMod reiniciados.');
+    await loadAutoMod();
   } catch (error) { toast(error.message, 'error'); }
   finally { setButtonBusy(button, false); }
 });

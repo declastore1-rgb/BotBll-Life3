@@ -26,12 +26,6 @@ export class AntiRaid {
   start() {
     this.client.on(Events.GuildMemberAdd, (member) => this.onMemberAdd(member).catch(console.error));
     this.client.on(Events.MessageCreate, (message) => this.onMessage(message).catch(console.error));
-    this.client.on(Events.ChannelDelete, (channel) => {
-      if (channel.guild) this.onDestructiveEvent(channel.guild, AuditLogEvent.ChannelDelete, channel.id, 'eliminación de canales').catch(console.error);
-    });
-    this.client.on(Events.GuildRoleDelete, (role) => {
-      this.onDestructiveEvent(role.guild, AuditLogEvent.RoleDelete, role.id, 'eliminación de roles').catch(console.error);
-    });
     this.client.on(Events.GuildBanAdd, (ban) => {
       this.onDestructiveEvent(ban.guild, AuditLogEvent.MemberBanAdd, ban.user.id, 'baneos masivos').catch(console.error);
     });

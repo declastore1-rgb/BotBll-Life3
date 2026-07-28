@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { hashPassword } from './auth.js';
 
-export const dashboardPermissions = Object.freeze(['antiraid', 'tickets', 'embeds', 'users']);
+export const dashboardPermissions = Object.freeze(['antiraid', 'antinuke', 'automod', 'tickets', 'embeds', 'users']);
 
 const clone = (value) => structuredClone(value);
 const normalizeUsername = (username) => username.trim().toLowerCase();
@@ -77,6 +77,23 @@ export class SettingsStore {
     const existing = this.data.guilds[this.guildId] ?? {};
     this.data.guilds[this.guildId] = {
       antiRaid: { ...clone(this.defaults.antiRaid), ...(existing.antiRaid ?? {}) },
+      antiNuke: {
+        ...clone(this.defaults.antiNuke),
+        ...(existing.antiNuke ?? {}),
+        snapshot: {
+          ...clone(this.defaults.antiNuke.snapshot),
+          ...(existing.antiNuke?.snapshot ?? {}),
+          channels: Array.isArray(existing.antiNuke?.snapshot?.channels) ? existing.antiNuke.snapshot.channels : [],
+          roles: Array.isArray(existing.antiNuke?.snapshot?.roles) ? existing.antiNuke.snapshot.roles : [],
+          emojis: Array.isArray(existing.antiNuke?.snapshot?.emojis) ? existing.antiNuke.snapshot.emojis : [],
+        },
+        incidents: Array.isArray(existing.antiNuke?.incidents) ? existing.antiNuke.incidents.slice(0, 50) : [],
+      },
+      autoMod: {
+        ...clone(this.defaults.autoMod),
+        ...(existing.autoMod ?? {}),
+        strikes: Array.isArray(existing.autoMod?.strikes) ? existing.autoMod.strikes.slice(0, 500) : [],
+      },
       tickets: { ...clone(this.defaults.tickets), ...(existing.tickets ?? {}) },
       embeds: {
         ...clone(this.defaults.embeds),
@@ -223,12 +240,85 @@ export class SettingsStore {
     });
   }
 
+  async replaceAntiNukeSnapshot(guildId, snapshot) {
+    return this.mutate((data) => {
+      data.guilds[guildId].antiNuke.snapshot = clone(snapshot);
+      return clone(snapshot);
+    });
+  }
+
+  async syncAntiNukeMemberRoles(guildId, memberId, roleIds) {
+    return this.mutate((data) => {
+      const roles = data.guilds[guildId].antiNuke.snapshot.roles;
+      const memberships = new Set(roleIds);
+      for (const role of roles) {
+        role.memberIds = (role.memberIds ?? []).filter((id) => id !== memberId);
+        if (memberships.has(role.id)) role.memberIds.push(memberId);
+      }
+      return true;
+    });
+  }
+
+  async recordAntiNukeIncident(guildId, incident) {
+    return this.mutate((data) => {
+      const incidents = data.guilds[guildId].antiNuke.incidents;
+      const value = { id: randomUUID(), ...clone(incident), createdAt: new Date().toISOString() };
+      incidents.unshift(value);
+      data.guilds[guildId].antiNuke.incidents = incidents.slice(0, 50);
+      return clone(value);
+    });
+  }
+
+  async recordAutoModStrike(guildId, userId, rule, windowHours) {
+    return this.mutate((data) => {
+      const autoMod = data.guilds[guildId].autoMod;
+      const now = Date.now();
+      const windowMs = windowHours * 3_600_000;
+      autoMod.strikes = autoMod.strikes.filter((item) => now - item.lastAt <= windowMs);
+      let strike = autoMod.strikes.find((item) => item.userId === userId);
+      if (!strike) {
+        strike = { userId, count: 0, lastAt: now, lastRule: rule, finalizedAt: null };
+        autoMod.strikes.push(strike);
+      }
+      strike.count += 1;
+      strike.lastAt = now;
+      strike.lastRule = rule;
+      autoMod.strikes = autoMod.strikes
+        .sort((left, right) => right.lastAt - left.lastAt)
+        .slice(0, 500);
+      return clone(strike);
+    });
+  }
+
+  async markAutoModFinalized(guildId, userId) {
+    return this.mutate((data) => {
+      const strike = data.guilds[guildId].autoMod.strikes.find((item) => item.userId === userId);
+      if (!strike) return null;
+      strike.finalizedAt = Date.now();
+      return clone(strike);
+    });
+  }
+
+  async clearAutoModStrikes(guildId, actor) {
+    return this.mutate((data) => {
+      data.guilds[guildId].autoMod.strikes = [];
+      this.addAudit(actor, 'AutoMod', 'Historial de sanciones progresivas reiniciado');
+      return true;
+    });
+  }
+
   async updateGuildSection(guildId, section, patch, actor) {
-    if (!['antiRaid', 'tickets'].includes(section)) throw new Error('Sección inválida.');
+    const modules = {
+      antiRaid: 'Anti-Raid',
+      antiNuke: 'Anti-Nuke',
+      autoMod: 'AutoMod',
+      tickets: 'Tickets',
+    };
+    if (!modules[section]) throw new Error('Sección inválida.');
     return this.mutate((data) => {
       data.guilds[guildId] ??= clone(this.data.guilds[this.guildId]);
       data.guilds[guildId][section] = { ...data.guilds[guildId][section], ...clone(patch) };
-      this.addAudit(actor, section === 'antiRaid' ? 'Anti-Raid' : 'Tickets', 'Configuración actualizada');
+      this.addAudit(actor, modules[section], 'Configuración actualizada');
       return clone(data.guilds[guildId][section]);
     });
   }

@@ -6,7 +6,9 @@ import {
   GatewayIntentBits,
   MessageFlags,
 } from 'discord.js';
+import { AntiNuke } from './antiNuke.js';
 import { AntiRaid } from './antiRaid.js';
+import { AutoMod } from './autoMod.js';
 import { EmbedScheduler } from './embedScheduler.js';
 import { commands } from './commands.js';
 import { config, defaultGuildSettings } from './config.js';
@@ -20,6 +22,22 @@ import {
   ticketIds,
 } from './tickets.js';
 import { createWebServer } from './web.js';
+
+const rotatingActivities = Object.freeze([
+  { name: 'Protegiendo BLL $ LIFE', type: ActivityType.Watching },
+  { name: 'Tickets • Seguridad', type: ActivityType.Listening },
+  { name: 'Developer By Linox', type: ActivityType.Playing },
+]);
+let presenceTimer = null;
+let presenceIndex = 0;
+
+function updatePresence(user) {
+  user.setPresence({
+    status: 'online',
+    activities: [rotatingActivities[presenceIndex]],
+  });
+  presenceIndex = (presenceIndex + 1) % rotatingActivities.length;
+}
 
 const store = new SettingsStore({
   dataDir: config.dataDir,
@@ -35,6 +53,7 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildExpressions,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildModeration,
     GatewayIntentBits.GuildWebhooks,
@@ -42,23 +61,26 @@ const client = new Client({
 });
 
 const antiRaid = new AntiRaid(client, store);
+const autoMod = new AutoMod(client, store, antiRaid);
+autoMod.start();
 antiRaid.start();
+const antiNuke = new AntiNuke(client, store, antiRaid);
+antiNuke.start();
 const embedScheduler = new EmbedScheduler(client, store, config.guildId);
 embedScheduler.start();
-const webServer = createWebServer({ client, store, antiRaid });
+const webServer = createWebServer({ client, store, antiRaid, antiNuke, autoMod });
 
 client.once(Events.ClientReady, async (readyClient) => {
   try {
     const guild = await readyClient.guilds.fetch(config.guildId);
     await readyClient.application.commands.set([]);
     await guild.commands.set(commands);
-    readyClient.user.setPresence({
-      status: 'online',
-      activities: [{ name: config.streamName, type: ActivityType.Streaming, url: config.streamUrl }],
-    });
+    updatePresence(readyClient.user);
+    presenceTimer = setInterval(() => updatePresence(readyClient.user), 20_000);
+    presenceTimer.unref();
     console.log(`✅ ${readyClient.user.tag} conectado en ${guild.name}.`);
     console.log('✅ Comandos registrados: /panel create y /antiraid status.');
-    console.log('✅ Presencia configurada como Transmitiendo.');
+    console.log('✅ Presencia En línea con 3 estados rotativos.');
   } catch (error) {
     console.error('No se pudo completar la inicialización:', error);
   }
@@ -139,6 +161,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 async function shutdown(signal) {
   console.log(`Cerrando por ${signal}...`);
+  if (presenceTimer) clearInterval(presenceTimer);
   embedScheduler.stop();
   client.destroy();
   webServer.close(() => process.exit(0));

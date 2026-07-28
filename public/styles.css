@@ -261,3 +261,22 @@ fieldset.disabled { opacity: .45; pointer-events: none; }
   .embed-preview-thumbnail { width: 58px; height: 58px; margin-left: 10px; }
   .saved-embed-card .card-header { flex-direction: column; }
 }
+.emergency-setting { padding: 17px 18px; border: 1px solid rgba(255, 200, 87, .16); border-radius: 14px; background: rgba(255, 200, 87, .045); transition: .2s ease; }
+.emergency-setting.active { border-color: rgba(255, 100, 124, .38); background: linear-gradient(90deg, rgba(255, 100, 124, .14), rgba(255, 100, 124, .035)); box-shadow: 0 0 34px rgba(255, 100, 124, .08); }
+.security-grid { display: grid; grid-template-columns: .9fr 1.1fr; gap: 18px; margin-top: 18px; }
+.snapshot-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 22px; }
+.snapshot-stats > div { padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: rgba(7, 9, 16, .45); text-align: center; }
+.snapshot-stats strong { display: block; font-size: 24px; }
+.snapshot-stats small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+.incident-list { display: grid; gap: 4px; max-height: 340px; margin-top: 15px; overflow: auto; }
+.incident-item { display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 11px; padding: 11px 4px; border-bottom: 1px solid rgba(255, 255, 255, .045); }
+.incident-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; font-weight: 900; }
+.incident-icon.restored { color: var(--success); background: rgba(80, 227, 164, .1); }
+.incident-icon.partial { color: var(--warning); background: rgba(255, 200, 87, .1); }
+.incident-icon.failed { color: var(--danger); background: rgba(255, 100, 124, .1); }
+.incident-item strong { display: block; font-size: 11px; }
+.incident-item small { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; overflow-wrap: anywhere; }
+.incident-item time { color: #717889; font-size: 9px; }
+@media (max-width: 900px) { .security-grid { grid-template-columns: 1fr; } }
+@media (max-width: 520px) { .snapshot-card .card-header { align-items: stretch; flex-direction: column; } .incident-item { grid-template-columns: 30px 1fr; } .incident-item time { grid-column: 2; } }
+.sidebar { overflow-y: auto; }

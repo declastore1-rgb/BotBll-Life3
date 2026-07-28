@@ -48,6 +48,8 @@
       <nav class="nav-list" aria-label="Navegación principal">
         <button class="nav-item active" data-page="overview"><span class="nav-icon">◈</span><span>Resumen</span></button>
         <button class="nav-item" data-page="antiraid" data-permission="antiraid"><span class="nav-icon">◇</span><span>Anti-Raid</span></button>
+        <button class="nav-item" data-page="antinuke" data-permission="antinuke"><span class="nav-icon">⬡</span><span>Anti-Nuke</span></button>
+        <button class="nav-item" data-page="automod" data-permission="automod"><span class="nav-icon">◉</span><span>AutoMod</span></button>
         <button class="nav-item" data-page="tickets" data-permission="tickets"><span class="nav-icon">▱</span><span>Tickets</span></button>
         <button class="nav-item" data-page="embeds" data-permission="embeds"><span class="nav-icon">▤</span><span>Embeds</span></button>
         <button class="nav-item" data-page="users" data-permission="users"><span class="nav-icon">◎</span><span>Usuarios</span></button>
@@ -115,6 +117,56 @@
             <label class="field"><span>Mensaje de advertencia de spam</span><textarea name="spamWarningMessage" rows="3" maxlength="180" required placeholder="Baja la intensidad o serás sancionado..."></textarea></label>
             <label class="field"><span>Lista blanca · IDs separados por coma</span><textarea name="trustedUserIds" rows="3" placeholder="123456789012345678, 987654321098765432"></textarea><small>El dueño del servidor y el bot siempre están protegidos.</small></label>
             <div class="form-actions"><span id="antiraid-save-state" class="save-state"></span><button class="button primary" type="submit">Guardar Anti-Raid</button></div>
+          </form>
+        </section>
+
+        <section id="page-antinuke" class="page">
+          <div class="section-heading"><div><div class="eyebrow">DEFENSA DE ESTRUCTURA</div><h3>Anti-Nuke Avanzado</h3><p class="muted">Detecta eliminaciones, neutraliza responsables y restaura recursos.</p></div><span id="antinuke-live-badge" class="badge neutral">Cargando</span></div>
+          <form id="antinuke-form" class="panel-card settings-form">
+            <div class="setting-row featured"><div><strong>Protección Anti-Nuke</strong><p>Vigila eliminaciones de canales, roles y emojis mediante el registro de auditoría.</p></div><label class="switch"><input name="enabled" type="checkbox"><span></span></label></div>
+            <div id="emergency-setting" class="setting-row emergency-setting"><div><strong>Modo de emergencia</strong><p>Neutraliza desde la primera eliminación no autorizada.</p></div><label class="switch"><input name="emergencyMode" type="checkbox"><span></span></label></div>
+            <div class="form-grid two">
+              <label class="check-row"><input name="autoRestore" type="checkbox"><span><strong>Restauración automática</strong><small>Recrea canales, roles y emojis usando la última copia.</small></span></label>
+              <label class="check-row"><input name="removeDangerousRoles" type="checkbox"><span><strong>Retirar roles peligrosos</strong><small>Quita permisos administrativos antes de aplicar la sanción.</small></span></label>
+              <label class="field"><span>Acciones antes de neutralizar</span><input name="actionThreshold" type="number" min="1" max="20" required></label>
+              <label class="field"><span>Ventana de acciones (s)</span><input name="actionWindowSeconds" type="number" min="3" max="300" required></label>
+            </div>
+            <div class="form-actions"><span id="antinuke-save-state" class="save-state"></span><button class="button primary" type="submit">Guardar Anti-Nuke</button></div>
+          </form>
+          <div class="security-grid">
+            <article class="panel-card snapshot-card"><div class="card-header"><div><div class="eyebrow">COPIA DE SEGURIDAD</div><h3>Recursos protegidos</h3></div><button id="refresh-security-snapshot" class="button ghost" type="button">Actualizar copia</button></div><div class="snapshot-stats"><div><strong id="snapshot-channels">0</strong><small>Canales</small></div><div><strong id="snapshot-roles">0</strong><small>Roles</small></div><div><strong id="snapshot-emojis">0</strong><small>Emojis</small></div></div><p id="snapshot-date" class="muted helper-copy">Sin copia registrada.</p></article>
+            <article class="panel-card"><div class="card-header"><div><div class="eyebrow">INCIDENTES</div><h3>Actividad reciente</h3></div></div><div id="antinuke-incidents" class="incident-list"><p class="empty-state">No hay incidentes.</p></div></article>
+          </div>
+        </section>
+
+        <section id="page-automod" class="page">
+          <div class="section-heading"><div><div class="eyebrow">MODERACIÓN DE CONTENIDO</div><h3>AutoMod Configurable</h3><p class="muted">Filtra contenido y aplica advertencias, timeout y sanción final.</p></div><span id="automod-live-badge" class="badge neutral">Cargando</span></div>
+          <form id="automod-form" class="panel-card settings-form">
+            <div class="setting-row featured"><div><strong>Protección AutoMod</strong><p>Analiza mensajes y archivos de miembros no confiables.</p></div><label class="switch"><input name="enabled" type="checkbox"><span></span></label></div>
+            <div class="form-grid three">
+              <label class="check-row"><input name="blockInvites" type="checkbox"><span><strong>Bloquear invitaciones</strong><small>Elimina invitaciones de Discord.</small></span></label>
+              <label class="check-row"><input name="blockUnauthorizedLinks" type="checkbox"><span><strong>Enlaces no autorizados</strong><small>Solo permite dominios de la lista blanca.</small></span></label>
+              <label class="check-row"><input name="blockSuspiciousFiles" type="checkbox"><span><strong>Archivos sospechosos</strong><small>Bloquea extensiones configuradas.</small></span></label>
+              <label class="field"><span>Mayúsculas máximas (%)</span><input name="maxCapsPercent" type="number" min="50" max="100" required></label>
+              <label class="field"><span>Letras mínimas para medir</span><input name="capsMinimumLength" type="number" min="4" max="100" required></label>
+              <label class="field"><span>Emojis máximos</span><input name="maxEmojis" type="number" min="1" max="100" required></label>
+            </div>
+            <div class="form-grid two">
+              <label class="field"><span>Palabras prohibidas · una por línea</span><textarea name="blockedWords" rows="6" maxlength="5100" placeholder="palabra\nfrase bloqueada"></textarea></label>
+              <div class="stack"><label class="field"><span>Dominios permitidos · uno por línea</span><textarea name="allowedDomains" rows="3" maxlength="10000" placeholder="youtube.com\nejemplo.com"></textarea></label><label class="field"><span>Extensiones sospechosas</span><textarea name="suspiciousExtensions" rows="2" maxlength="550" placeholder="exe, bat, scr"></textarea></label></div>
+            </div>
+            <div class="divider"></div>
+            <div><div class="eyebrow">SANCIONES PROGRESIVAS</div><p class="muted helper-copy">La primera infracción advierte; después se aplica timeout y finalmente la sanción elegida.</p></div>
+            <div class="form-grid three">
+              <label class="field"><span>Strike para timeout</span><input name="timeoutStrike" type="number" min="2" max="10" required></label>
+              <label class="field"><span>Strike para sanción final</span><input name="finalStrike" type="number" min="2" max="20" required></label>
+              <label class="field"><span>Ventana de strikes (h)</span><input name="strikeWindowHours" type="number" min="1" max="720" required></label>
+              <label class="field"><span>Duración timeout (min)</span><input name="timeoutMinutes" type="number" min="1" max="40320" required></label>
+              <label class="field"><span>Sanción final</span><select name="finalAction"><option value="ban">Banear</option><option value="kick">Expulsar</option><option value="timeout">Timeout</option></select></label>
+            </div>
+            <label class="field"><span>Mensaje de advertencia</span><textarea name="warningMessage" rows="3" maxlength="240" required></textarea></label>
+            <div class="form-grid two"><label class="field"><span>Canales ignorados · IDs</span><textarea name="ignoredChannelIds" rows="3" placeholder="123456789012345678"></textarea></label><label class="field"><span>Roles ignorados · IDs</span><textarea name="ignoredRoleIds" rows="3" placeholder="123456789012345678"></textarea></label></div>
+            <div class="form-actions"><span id="automod-save-state" class="save-state"></span><button id="clear-automod-strikes" class="button danger" type="button">Reiniciar strikes</button><button class="button primary" type="submit">Guardar AutoMod</button></div>
           </form>
         </section>
 
@@ -252,7 +304,9 @@
       <label class="check-row admin-check"><input name="isAdmin" type="checkbox"><span><strong>Acceso total</strong><small>Puede gestionar todas las secciones y usuarios.</small></span></label>
       <fieldset id="permission-fieldset"><legend>Permisos específicos</legend>
         <div class="permission-grid">
-          <label class="check-card"><input name="permissions" type="checkbox" value="antiraid"><span><strong>Anti-Raid</strong><small>Ver y modificar protección.</small></span></label>
+          <label class="check-card"><input name="permissions" type="checkbox" value="antiraid"><span><strong>Anti-Raid</strong><small>Gestionar entradas, spam y ataques básicos.</small></span></label>
+          <label class="check-card"><input name="permissions" type="checkbox" value="antinuke"><span><strong>Anti-Nuke</strong><small>Restauraciones y modo de emergencia.</small></span></label>
+          <label class="check-card"><input name="permissions" type="checkbox" value="automod"><span><strong>AutoMod</strong><small>Filtros y sanciones de contenido.</small></span></label>
           <label class="check-card"><input name="permissions" type="checkbox" value="tickets"><span><strong>Tickets</strong><small>Configurar y publicar panel.</small></span></label>
           <label class="check-card"><input name="permissions" type="checkbox" value="embeds"><span><strong>Embeds</strong><small>Crear, enviar y programar mensajes.</small></span></label>
           <label class="check-card"><input name="permissions" type="checkbox" value="users"><span><strong>Usuarios</strong><small>Crear y editar accesos.</small></span></label>

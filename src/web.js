@@ -205,6 +205,85 @@ function sanitizeAntiRaid(body) {
   return patch;
 }
 
+function cleanList(value, field, maximumItems, maximumLength, validator = () => true) {
+  if (value === undefined) return undefined;
+  const source = Array.isArray(value) ? value : String(value).split(/[\n,]/);
+  const items = [...new Set(source.map((item) => String(item).trim()).filter(Boolean))];
+  if (items.length > maximumItems) throw new Error(`${field} permite un máximo de ${maximumItems} elementos.`);
+  if (items.some((item) => item.length > maximumLength || !validator(item))) {
+    throw new Error(`${field} contiene un valor inválido.`);
+  }
+  return items;
+}
+
+function sanitizeAntiNuke(body) {
+  const patch = {};
+  for (const key of ['enabled', 'autoRestore', 'removeDangerousRoles', 'emergencyMode']) {
+    if (body[key] !== undefined) patch[key] = cleanBoolean(body[key], undefined, key);
+  }
+  for (const [key, minimum, maximum] of [
+    ['actionThreshold', 1, 20],
+    ['actionWindowSeconds', 3, 300],
+  ]) {
+    const value = cleanInteger(body, key, minimum, maximum);
+    if (value !== undefined) patch[key] = value;
+  }
+  return patch;
+}
+
+function sanitizeAutoMod(body) {
+  const patch = {};
+  for (const key of ['enabled', 'blockInvites', 'blockUnauthorizedLinks', 'blockSuspiciousFiles']) {
+    if (body[key] !== undefined) patch[key] = cleanBoolean(body[key], undefined, key);
+  }
+  const numericFields = {
+    maxCapsPercent: [50, 100],
+    capsMinimumLength: [4, 100],
+    maxEmojis: [1, 100],
+    timeoutStrike: [2, 10],
+    finalStrike: [2, 20],
+    strikeWindowHours: [1, 720],
+    timeoutMinutes: [1, 40_320],
+  };
+  for (const [key, [minimum, maximum]] of Object.entries(numericFields)) {
+    const value = cleanInteger(body, key, minimum, maximum);
+    if (value !== undefined) patch[key] = value;
+  }
+  if (body.finalAction !== undefined) {
+    if (!['ban', 'kick', 'timeout'].includes(body.finalAction)) throw new Error('La sanción final de AutoMod no es válida.');
+    patch.finalAction = body.finalAction;
+  }
+  if (body.warningMessage !== undefined) patch.warningMessage = cleanText(body.warningMessage, undefined, 240);
+  const blockedWords = cleanList(body.blockedWords, 'Palabras prohibidas', 100, 50);
+  if (blockedWords !== undefined) patch.blockedWords = blockedWords;
+  const allowedDomains = cleanList(
+    body.allowedDomains,
+    'Dominios permitidos',
+    100,
+    253,
+    (item) => /^(?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\.)+[a-z]{2,}$/i.test(item),
+  );
+  if (allowedDomains !== undefined) patch.allowedDomains = allowedDomains.map((item) => item.toLowerCase().replace(/^www\./, ''));
+  const suspiciousExtensions = cleanList(
+    body.suspiciousExtensions,
+    'Extensiones sospechosas',
+    50,
+    10,
+    (item) => /^[a-z0-9]+$/i.test(item.replace(/^\./, '')),
+  );
+  if (suspiciousExtensions !== undefined) patch.suspiciousExtensions = suspiciousExtensions.map((item) => item.toLowerCase().replace(/^\./, ''));
+  for (const key of ['ignoredChannelIds', 'ignoredRoleIds']) {
+    const ids = cleanList(body[key], key, 100, 20, (item) => SNOWFLAKE.test(item));
+    if (ids !== undefined) patch[key] = ids;
+  }
+  const timeoutStrike = patch.timeoutStrike ?? body.timeoutStrike;
+  const finalStrike = patch.finalStrike ?? body.finalStrike;
+  if (timeoutStrike !== undefined && finalStrike !== undefined && Number(finalStrike) <= Number(timeoutStrike)) {
+    throw new Error('La sanción final debe ocurrir después del primer timeout.');
+  }
+  return patch;
+}
+
 function sanitizeTickets(body, current, guild) {
   const patch = {};
   if (body.enabled !== undefined) patch.enabled = cleanBoolean(body.enabled, undefined, 'enabled');
@@ -302,7 +381,7 @@ function registerFailedLogin(ip) {
   loginAttempts.set(ip, current);
 }
 
-export function createWebServer({ client, store, antiRaid }) {
+export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
@@ -408,6 +487,8 @@ export function createWebServer({ client, store, antiRaid }) {
       : 0;
     const audit = store.getAudit().filter((entry) => {
       if (entry.module === 'Anti-Raid') return can(user, 'antiraid');
+      if (entry.module === 'Anti-Nuke') return can(user, 'antinuke');
+      if (entry.module === 'AutoMod') return can(user, 'automod');
       if (entry.module === 'Tickets') return can(user, 'tickets');
       if (entry.module === 'Embeds') return can(user, 'embeds');
       return can(user, 'users');
@@ -433,7 +514,7 @@ export function createWebServer({ client, store, antiRaid }) {
     });
   });
 
-  app.get('/api/discord/resources', requireAnyPermission('tickets', 'embeds'), (_request, response) => {
+  app.get('/api/discord/resources', requireAnyPermission('antiraid', 'antinuke', 'automod', 'tickets', 'embeds'), (_request, response) => {
     const guild = client.guilds.cache.get(config.guildId);
     if (!guild) return response.status(503).json({ error: 'Discord todavía no está conectado.' });
     const roles = guild.roles.cache
@@ -476,6 +557,76 @@ export function createWebServer({ client, store, antiRaid }) {
     } catch (error) {
       next(error);
     }
+  });
+
+  app.get('/api/antinuke', requirePermission('antinuke'), (_request, response) => {
+    const section = store.getGuildSettings(config.guildId).antiNuke;
+    const { snapshot: _snapshot, incidents: _incidents, ...settings } = section;
+    response.json({ settings, status: antiNuke.status(config.guildId) });
+  });
+
+  app.patch('/api/antinuke', requirePermission('antinuke'), async (request, response, next) => {
+    try {
+      const current = store.getGuildSettings(config.guildId).antiNuke;
+      const patch = sanitizeAntiNuke(request.body ?? {});
+      if (!current.enabled && patch.enabled === true) {
+        const guild = client.guilds.cache.get(config.guildId);
+        if (!guild) throw new Error('Discord todavía no está conectado.');
+        await guild.members.fetch();
+        await antiNuke.captureSnapshot(guild, { waitForIdle: true });
+      }
+      const settings = await store.updateGuildSection(
+        config.guildId,
+        'antiNuke',
+        patch,
+        request.dashboardAuth.user,
+      );
+      const { snapshot: _snapshot, incidents: _incidents, ...publicSettings } = settings;
+      response.json({ settings: publicSettings, status: antiNuke.status(config.guildId) });
+    } catch (error) { next(error); }
+  });
+
+  app.post('/api/antinuke/snapshot', requirePermission('antinuke'), async (request, response, next) => {
+    try {
+      const guild = client.guilds.cache.get(config.guildId);
+      if (!guild) throw new Error('Discord todavía no está conectado.');
+      await guild.members.fetch();
+      await antiNuke.captureSnapshot(guild, { waitForIdle: true });
+      await store.recordAudit(request.dashboardAuth.user, 'Anti-Nuke', 'Copia de seguridad actualizada manualmente');
+      response.json({ status: antiNuke.status(config.guildId) });
+    } catch (error) { next(error); }
+  });
+
+  app.get('/api/automod', requirePermission('automod'), (_request, response) => {
+    const section = store.getGuildSettings(config.guildId).autoMod;
+    const { strikes: _strikes, ...settings } = section;
+    response.json({ settings, status: autoMod.status(config.guildId) });
+  });
+
+  app.patch('/api/automod', requirePermission('automod'), async (request, response, next) => {
+    try {
+      const current = store.getGuildSettings(config.guildId).autoMod;
+      const patch = sanitizeAutoMod(request.body ?? {});
+      const proposed = { ...current, ...patch };
+      if (proposed.finalStrike <= proposed.timeoutStrike) {
+        throw new Error('La sanción final debe ocurrir después del primer timeout.');
+      }
+      const settings = await store.updateGuildSection(
+        config.guildId,
+        'autoMod',
+        patch,
+        request.dashboardAuth.user,
+      );
+      const { strikes: _strikes, ...publicSettings } = settings;
+      response.json({ settings: publicSettings, status: autoMod.status(config.guildId) });
+    } catch (error) { next(error); }
+  });
+
+  app.delete('/api/automod/strikes', requirePermission('automod'), async (request, response, next) => {
+    try {
+      await store.clearAutoModStrikes(config.guildId, request.dashboardAuth.user);
+      response.json({ ok: true, status: autoMod.status(config.guildId) });
+    } catch (error) { next(error); }
   });
 
   app.get('/api/tickets', requirePermission('tickets'), (_request, response) => {
