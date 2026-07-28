@@ -283,7 +283,7 @@ function syncEmojiPicker(select) {
     picker.trigger.classList.add('has-selection');
   } else {
     const placeholder = document.createElement('span');
-    placeholder.textContent = 'Selecciona un emoji';
+    placeholder.textContent = 'Elegir emoji del servidor';
     picker.selected.append(placeholder);
     picker.trigger.classList.remove('has-selection');
   }
@@ -300,9 +300,9 @@ function renderEmojiPicker(select, query = '') {
     clear.type = 'button';
     clear.className = 'visual-emoji-option clear-option';
     clear.title = 'Sin emoji';
+    clear.setAttribute('aria-label', 'No usar emoji');
     const clearIcon = document.createElement('span'); clearIcon.textContent = '∅';
-    const clearName = document.createElement('small'); clearName.textContent = 'Ninguno';
-    clear.append(clearIcon, clearName);
+    clear.append(clearIcon);
     clear.addEventListener('click', (event) => {
       event.preventDefault(); event.stopPropagation();
       select.value = '';
@@ -324,8 +324,7 @@ function renderEmojiPicker(select, query = '') {
     image.src = emoji.url;
     image.alt = `:${emoji.name}:`;
     image.loading = 'lazy';
-    const name = document.createElement('small'); name.textContent = emoji.name;
-    button.append(image, name);
+    button.append(image);
     button.addEventListener('click', (event) => {
       event.preventDefault(); event.stopPropagation();
       select.value = emoji.id;
@@ -337,7 +336,10 @@ function renderEmojiPicker(select, query = '') {
   }
 
   picker.grid.replaceChildren(...buttons);
-  picker.empty.classList.toggle('hidden', emojis.length > 0 || !cleanQuery);
+  picker.empty.textContent = cleanQuery
+    ? 'No se encontraron emojis.'
+    : 'Este servidor todavía no tiene emojis personalizados.';
+  picker.empty.classList.toggle('hidden', emojis.length > 0);
 }
 
 function ensureEmojiPicker(select, emojis) {
@@ -350,11 +352,12 @@ function ensureEmojiPicker(select, emojis) {
     const chevron = document.createElement('span'); chevron.className = 'visual-emoji-chevron'; chevron.textContent = '⌄';
     trigger.append(selected, chevron);
     const panel = document.createElement('div'); panel.className = 'visual-emoji-panel hidden';
+    const heading = document.createElement('div'); heading.className = 'visual-emoji-heading'; heading.textContent = 'EMOJIS DEL SERVIDOR';
     const search = document.createElement('input');
     search.type = 'search'; search.className = 'visual-emoji-search'; search.placeholder = 'Buscar emoji...'; search.autocomplete = 'off';
     const grid = document.createElement('div'); grid.className = 'visual-emoji-grid';
     const empty = document.createElement('p'); empty.className = 'visual-emoji-empty hidden'; empty.textContent = 'No se encontraron emojis.';
-    panel.append(search, grid, empty); root.append(trigger, panel); select.insertAdjacentElement('afterend', root);
+    panel.append(heading, search, grid, empty); root.append(trigger, panel); select.insertAdjacentElement('afterend', root);
     select._visualEmojiPicker = { root, trigger, selected, panel, search, grid, empty, emojis: [] };
 
     trigger.addEventListener('click', (event) => {
@@ -393,38 +396,18 @@ function emojiField(name) {
   return $(`[data-emoji-field="${name}"]`);
 }
 
-function updateEmojiField(field) {
-  if (!field) return;
-  const type = $('[data-emoji-type]', field).value;
-  $('[data-emoji-unicode]', field).classList.toggle('hidden', type !== 'unicode');
-  $('[data-emoji-custom]', field).classList.toggle('hidden', type !== 'custom');
-  if (type !== 'custom') closeEmojiPicker($('[data-emoji-custom] select', field));
-}
-
 function setEmojiField(name, emoji) {
   const field = emojiField(name);
   if (!field) return;
-  const type = emoji?.type === 'custom' ? 'custom' : emoji?.name ? 'unicode' : 'none';
-  $('[data-emoji-type]', field).value = type;
-  $('[data-emoji-unicode] input', field).value = type === 'unicode' ? emoji.name : '';
   const customSelect = $('[data-emoji-custom] select', field);
-  customSelect.value = type === 'custom' ? emoji.id : '';
+  customSelect.value = emoji?.type === 'custom' ? emoji.id : '';
   syncEmojiPicker(customSelect);
-  updateEmojiField(field);
 }
 
 function readEmojiField(name) {
   const field = emojiField(name);
-  const type = $('[data-emoji-type]', field).value;
-  if (type === 'unicode') {
-    const value = $('[data-emoji-unicode] input', field).value.trim();
-    return value ? { type: 'unicode', name: value } : null;
-  }
-  if (type === 'custom') {
-    const id = $('[data-emoji-custom] select', field).value;
-    return id ? { type: 'custom', id } : null;
-  }
-  return null;
+  const id = $('[data-emoji-custom] select', field).value;
+  return id ? { type: 'custom', id } : null;
 }
 
 function appendEmojiLabel(element, emoji, label) {
@@ -972,12 +955,6 @@ $('#clear-automod-strikes').addEventListener('click', async (event) => {
   finally { setButtonBusy(button, false); }
 });
 
-$$('[data-emoji-field]').forEach((field) => {
-  $('[data-emoji-type]', field).addEventListener('change', () => {
-    updateEmojiField(field);
-    updateTicketPreview();
-  });
-});
 $('#tickets-form').addEventListener('input', updateTicketPreview);
 $('#tickets-form').addEventListener('submit', async (event) => {
   event.preventDefault();

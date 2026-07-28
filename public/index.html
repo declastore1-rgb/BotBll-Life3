@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090b12">
   <title>BLL $ LIFE · Control Center</title>
-  <link rel="stylesheet" href="/assets/styles.css">
-  <script src="/assets/app.js" defer></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=20260727-2">
+  <script src="/assets/app.js?v=20260727-2" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -193,10 +193,10 @@
             <div class="form-grid two">
               <label class="field"><span>Texto · Abrir ticket</span><input name="createButtonLabel" maxlength="80" required></label>
               <label class="field"><span>Color · Abrir ticket</span><select name="createButtonStyle"><option value="primary">Azul</option><option value="secondary">Gris</option><option value="success">Verde</option><option value="danger">Rojo</option></select></label>
-              <div class="emoji-field" data-emoji-field="createButtonEmoji"><label class="field"><span>Emoji · Abrir ticket</span><select data-emoji-type><option value="none">Sin emoji</option><option value="unicode">Unicode</option><option value="custom">Personalizado del servidor</option></select></label><label class="field" data-emoji-unicode><span>Emoji Unicode</span><input maxlength="16" placeholder="🎫"></label><label class="field hidden" data-emoji-custom><span>Emoji del servidor</span><select><option value="">Selecciona un emoji</option></select></label></div>
+              <div class="emoji-field" data-emoji-field="createButtonEmoji"><label class="field" data-emoji-custom><span>Emoji · Abrir ticket</span><select class="emoji-native-select" aria-label="Emoji del servidor para abrir ticket"><option value="">Sin emoji</option></select></label></div>
               <label class="field"><span>Texto · Información</span><input name="infoButtonLabel" maxlength="80" required></label>
               <label class="field"><span>Color · Información</span><select name="infoButtonStyle"><option value="primary">Azul</option><option value="secondary">Gris</option><option value="success">Verde</option><option value="danger">Rojo</option></select></label>
-              <div class="emoji-field" data-emoji-field="infoButtonEmoji"><label class="field"><span>Emoji · Información</span><select data-emoji-type><option value="none">Sin emoji</option><option value="unicode">Unicode</option><option value="custom">Personalizado del servidor</option></select></label><label class="field" data-emoji-unicode><span>Emoji Unicode</span><input maxlength="16" placeholder="ℹ️"></label><label class="field hidden" data-emoji-custom><span>Emoji del servidor</span><select><option value="">Selecciona un emoji</option></select></label></div>
+              <div class="emoji-field" data-emoji-field="infoButtonEmoji"><label class="field" data-emoji-custom><span>Emoji · Información</span><select class="emoji-native-select" aria-label="Emoji del servidor para información"><option value="">Sin emoji</option></select></label></div>
             </div>
             <div class="extra-buttons-section">
               <div class="card-header"><div><div class="eyebrow">BOTONES ADICIONALES</div><h3>Acciones personalizadas</h3><p class="muted helper-copy">Añade hasta 3 respuestas privadas o enlaces.</p></div><button id="add-extra-button" class="button ghost" type="button">Añadir botón</button></div>
@@ -285,7 +285,7 @@
         <label class="field"><span>Etiqueta</span><input name="label" maxlength="80" required placeholder="Reglas"></label>
         <label class="field"><span>Acción</span><select name="type"><option value="response">Respuesta privada</option><option value="link">Abrir enlace</option></select></label>
         <label id="extra-style-field" class="field"><span>Color</span><select name="style"><option value="primary">Azul</option><option value="secondary">Gris</option><option value="success">Verde</option><option value="danger">Rojo</option></select></label>
-        <div class="emoji-field modal-emoji-field" data-emoji-field="extraButtonEmoji"><label class="field"><span>Emoji</span><select data-emoji-type><option value="none">Sin emoji</option><option value="unicode">Unicode</option><option value="custom">Personalizado del servidor</option></select></label><label class="field hidden" data-emoji-unicode><span>Emoji Unicode</span><input maxlength="16" placeholder="📌"></label><label class="field hidden" data-emoji-custom><span>Emoji del servidor</span><select><option value="">Selecciona un emoji</option></select></label></div>
+        <div class="emoji-field modal-emoji-field" data-emoji-field="extraButtonEmoji"><label class="field" data-emoji-custom><span>Emoji del servidor</span><select class="emoji-native-select" aria-label="Emoji del servidor para el botón adicional"><option value="">Sin emoji</option></select></label></div>
       </div>
       <label class="field"><span id="extra-value-label">Mensaje privado</span><textarea name="value" rows="5" maxlength="2000" required placeholder="Contenido que verá el usuario..."></textarea><small id="extra-value-help">Se mostrará únicamente al usuario que pulse el botón.</small></label>
       <p id="extra-button-error" class="form-error hidden"></p>
