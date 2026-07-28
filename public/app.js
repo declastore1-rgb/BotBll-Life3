@@ -425,10 +425,78 @@ function appendEmojiLabel(element, emoji, label) {
   element.append(document.createTextNode(label));
 }
 
+const ticketButtonStyles = {
+  primary: { label: 'Azul', color: '#5865F2' },
+  secondary: { label: 'Gris', color: '#4E5058' },
+  success: { label: 'Verde', color: '#248046' },
+  danger: { label: 'Rojo', color: '#DA373C' },
+};
+const ticketStyleLabels = {
+  ...Object.fromEntries(Object.entries(ticketButtonStyles).map(([style, value]) => [style, value.label])),
+  link: 'Enlace',
+};
+
+function colorDistance(left, right) {
+  const channels = (color) => [1, 3, 5].map((index) => Number.parseInt(color.slice(index, index + 2), 16));
+  const [leftRed, leftGreen, leftBlue] = channels(left);
+  const [rightRed, rightGreen, rightBlue] = channels(right);
+  return (leftRed - rightRed) ** 2 + (leftGreen - rightGreen) ** 2 + (leftBlue - rightBlue) ** 2;
+}
+
+function nearestTicketButtonStyle(color) {
+  return Object.entries(ticketButtonStyles).reduce((nearest, [style, option]) => (
+    colorDistance(color, option.color) < colorDistance(color, ticketButtonStyles[nearest].color) ? style : nearest
+  ), 'primary');
+}
+
+function syncTicketButtonColorPicker(select) {
+  const picker = select?._ticketButtonColorPicker;
+  if (!picker) return;
+  const style = ticketButtonStyles[select.value] ? select.value : 'primary';
+  const option = ticketButtonStyles[style];
+  picker.input.value = option.color;
+  picker.code.textContent = `${option.color} · ${option.label}`;
+}
+
+function ensureTicketButtonColorPicker(select) {
+  select.classList.add('ticket-button-style-select');
+  if (!select._ticketButtonColorPicker) {
+    const control = document.createElement('div');
+    control.className = 'ticket-button-color-control';
+    const input = document.createElement('input');
+    input.type = 'color';
+    input.setAttribute('aria-label', select.getAttribute('aria-label') || 'Elegir color del botón');
+    const code = document.createElement('code');
+    control.append(input, code);
+    select.insertAdjacentElement('afterend', control);
+    select._ticketButtonColorPicker = { control, input, code };
+
+    input.addEventListener('input', () => {
+      select.value = nearestTicketButtonStyle(input.value.toUpperCase());
+      code.textContent = `${input.value.toUpperCase()} · ${ticketButtonStyles[select.value].label}`;
+      updateTicketPreview();
+    });
+    input.addEventListener('change', () => {
+      syncTicketButtonColorPicker(select);
+      updateTicketPreview();
+    });
+  }
+  syncTicketButtonColorPicker(select);
+}
+
+function initializeTicketButtonColorPickers() {
+  [
+    $('#tickets-form [name="createButtonStyle"]'),
+    $('#tickets-form [name="infoButtonStyle"]'),
+    $('#extra-button-form [name="style"]'),
+  ].forEach(ensureTicketButtonColorPicker);
+}
+
 async function loadTickets() {
   const [data, resources] = await Promise.all([api('/api/tickets'), getResources()]);
   state.extraButtons = structuredClone(data.settings.extraButtons ?? []);
   fillForm($('#tickets-form'), data.settings);
+  initializeTicketButtonColorPickers();
   populateSelect($('#tickets-form [name="categoryId"]'), resources.categories, data.settings.categoryId);
   populateSelect($('#tickets-form [name="supportRoleId"]'), resources.roles, data.settings.supportRoleId, '@');
   populateSelect($('#tickets-form [name="logChannelId"]'), resources.channels, data.settings.logChannelId, '#');
@@ -443,10 +511,6 @@ async function loadTickets() {
   renderExtraButtons();
   updateTicketPreview();
 }
-
-const ticketStyleLabels = {
-  primary: 'Azul', secondary: 'Gris', success: 'Verde', danger: 'Rojo', link: 'Enlace',
-};
 
 function updateTicketPreview() {
   const form = $('#tickets-form');
@@ -538,6 +602,7 @@ function openExtraButtonDialog(button = null) {
   form.elements.label.value = button?.label ?? '';
   form.elements.type.value = button?.type ?? 'response';
   form.elements.style.value = button?.style === 'link' ? 'secondary' : button?.style ?? 'secondary';
+  syncTicketButtonColorPicker(form.elements.style);
   form.elements.value.value = button?.value ?? '';
   setEmojiField('extraButtonEmoji', button?.emoji);
   $('#extra-button-title').textContent = button ? 'Editar botón' : 'Nuevo botón';

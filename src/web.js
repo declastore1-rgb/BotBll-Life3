@@ -23,6 +23,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, '..', 'public');
+const DASHBOARD_VERSION = 'tickets-ui-20260727-3';
 const loginAttempts = new Map();
 const SNOWFLAKE = /^\d{17,20}$/;
 const HEX_COLOR = /^#[0-9A-F]{6}$/i;
@@ -384,7 +385,12 @@ function registerFailedLogin(ip) {
 export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) {
   const app = express();
   app.disable('x-powered-by');
+  app.disable('etag');
   app.set('trust proxy', 1);
+  app.use((_request, response, next) => {
+    response.setHeader('X-Dashboard-Version', DASHBOARD_VERSION);
+    next();
+  });
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
@@ -402,6 +408,7 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
     response.status(client.isReady() ? 200 : 503).json({
       ok: client.isReady(),
       discord: client.isReady() ? 'connected' : 'connecting',
+      dashboardVersion: DASHBOARD_VERSION,
       uptime: Math.floor(process.uptime()),
     });
   });
@@ -822,8 +829,22 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
     }
   });
 
-  app.use('/assets', express.static(publicDir, { fallthrough: false, maxAge: '1h' }));
-  app.get('/', (_request, response) => response.sendFile(path.join(publicDir, 'index.html')));
+  const disableDashboardCache = (response) => {
+    response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    response.setHeader('Pragma', 'no-cache');
+    response.setHeader('Expires', '0');
+  };
+  app.use('/assets', express.static(publicDir, {
+    fallthrough: false,
+    etag: false,
+    lastModified: false,
+    maxAge: 0,
+    setHeaders: disableDashboardCache,
+  }));
+  app.get('/', (_request, response) => {
+    disableDashboardCache(response);
+    response.sendFile(path.join(publicDir, 'index.html'), { cacheControl: false, lastModified: false });
+  });
 
   app.use((error, _request, response, _next) => {
     console.error('[Dashboard]', error);
