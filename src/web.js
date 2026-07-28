@@ -13,6 +13,7 @@ import {
   verifySession,
 } from './auth.js';
 import { config } from './config.js';
+import { buildCustomEmbed } from './embeds.js';
 import { can, dashboardPermissions, toPublicUser } from './store.js';
 import {
   buildPanel,
@@ -27,6 +28,10 @@ const SNOWFLAKE = /^\d{17,20}$/;
 const HEX_COLOR = /^#[0-9A-F]{6}$/i;
 const BUTTON_STYLES = new Set(['primary', 'secondary', 'success', 'danger']);
 const EXTRA_BUTTON_ID = /^[a-zA-Z0-9_-]{1,36}$/;
+const KEYCAP_EMOJI = /^[#*0-9]\uFE0F?\u20E3$/u;
+const FLAG_EMOJI = /^\p{Regional_Indicator}{2}$/u;
+const PICTOGRAPHIC_EMOJI = /^\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?)*$/u;
+const graphemeSegmenter = new Intl.Segmenter('es', { granularity: 'grapheme' });
 
 function cleanText(value, fallback, maxLength) {
   if (value === undefined) return fallback;
@@ -34,6 +39,12 @@ function cleanText(value, fallback, maxLength) {
   const clean = value.trim();
   if (!clean || clean.length > maxLength) throw new Error(`El texto debe tener entre 1 y ${maxLength} caracteres.`);
   return clean;
+}
+
+function cleanBoolean(value, fallback, field) {
+  if (value === undefined) return fallback;
+  if (typeof value !== 'boolean') throw new Error(`${field} debe ser verdadero o falso.`);
+  return value;
 }
 
 function cleanSnowflake(value, field, required = false) {
@@ -69,6 +80,7 @@ function cleanButtonStyle(value, fallback) {
 function isPrivateHostname(hostname) {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (host === 'localhost' || host === '::1' || host.endsWith('.local')) return true;
+  if (host.includes(':')) return true;
   const parts = host.split('.').map(Number);
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
   return parts[0] === 10
@@ -79,7 +91,37 @@ function isPrivateHostname(hostname) {
     || (parts[0] === 192 && parts[1] === 168);
 }
 
-function sanitizeExtraButtons(value, current) {
+function cleanPublicUrl(value, fallback = '') {
+  if (value === undefined) return fallback;
+  const clean = String(value).trim();
+  if (!clean) return '';
+  let url;
+  try { url = new URL(clean); } catch { throw new Error('Una de las imágenes o URLs no es válida.'); }
+  if (url.protocol !== 'https:' || url.username || url.password || isPrivateHostname(url.hostname) || url.toString().length > 2_048) {
+    throw new Error('Las imágenes y enlaces deben usar HTTPS y un destino público.');
+  }
+  return url.toString();
+}
+
+function cleanEmoji(value, guild, fallback = null) {
+  if (value === undefined) return fallback;
+  if (!value) return null;
+  if (value.type === 'custom') {
+    const emoji = guild?.emojis.cache.get(String(value.id));
+    if (!emoji) throw new Error('Uno de los emojis del servidor ya no existe.');
+    return { type: 'custom', id: emoji.id, name: emoji.name, animated: emoji.animated };
+  }
+  const name = typeof value.name === 'string' ? value.name.trim() : '';
+  if (!name) return null;
+  const graphemes = [...graphemeSegmenter.segment(name)];
+  const validEmoji = KEYCAP_EMOJI.test(name) || FLAG_EMOJI.test(name) || PICTOGRAPHIC_EMOJI.test(name);
+  if (name.length > 16 || graphemes.length !== 1 || graphemes[0].segment !== name || !validEmoji) {
+    throw new Error('Selecciona un único emoji tradicional válido.');
+  }
+  return { type: 'unicode', name };
+}
+
+function sanitizeExtraButtons(value, current, guild) {
   if (value === undefined) return current;
   if (!Array.isArray(value) || value.length > 3) {
     throw new Error('Puedes configurar hasta 3 botones adicionales.');
@@ -107,7 +149,7 @@ function sanitizeExtraButtons(value, current) {
       ) {
         throw new Error(`El enlace de “${label}” debe usar HTTPS y un destino público.`);
       }
-      return { id, label, type, style: 'link', value: url.toString() };
+      return { id, label, type, style: 'link', value: url.toString(), emoji: cleanEmoji(button.emoji, guild) };
     }
     if (typeof button.value !== 'string') throw new Error(`El botón “${label}” necesita contenido.`);
     return {
@@ -116,13 +158,18 @@ function sanitizeExtraButtons(value, current) {
       type,
       style: cleanButtonStyle(button.style, 'secondary'),
       value: cleanText(button.value, undefined, 2_000),
+      emoji: cleanEmoji(button.emoji, guild),
     };
   });
 }
 
 function sanitizeAntiRaid(body) {
   const patch = {};
-  if (body.enabled !== undefined) patch.enabled = Boolean(body.enabled);
+  if (body.enabled !== undefined) patch.enabled = cleanBoolean(body.enabled, undefined, 'enabled');
+  if (body.spamWarningEnabled !== undefined) {
+    patch.spamWarningEnabled = cleanBoolean(body.spamWarningEnabled, undefined, 'spamWarningEnabled');
+  }
+  if (body.spamWarningMessage !== undefined) patch.spamWarningMessage = cleanText(body.spamWarningMessage, undefined, 180);
   if (body.action !== undefined) {
     if (!['ban', 'kick', 'timeout'].includes(body.action)) throw new Error('La sanción seleccionada no es válida.');
     patch.action = body.action;
@@ -135,6 +182,9 @@ function sanitizeAntiRaid(body) {
     massMentionThreshold: [2, 100],
     spamMessageThreshold: [3, 100],
     spamWindowSeconds: [1, 300],
+    spamEscalationMinutes: [1, 1_440],
+    duplicateMessageThreshold: [2, 20],
+    maxLinksPerMessage: [1, 20],
     destructiveThreshold: [2, 50],
     destructiveWindowSeconds: [1, 300],
     timeoutMinutes: [1, 40_320],
@@ -155,9 +205,9 @@ function sanitizeAntiRaid(body) {
   return patch;
 }
 
-function sanitizeTickets(body, current) {
+function sanitizeTickets(body, current, guild) {
   const patch = {};
-  if (body.enabled !== undefined) patch.enabled = Boolean(body.enabled);
+  if (body.enabled !== undefined) patch.enabled = cleanBoolean(body.enabled, undefined, 'enabled');
   for (const [key, label, required] of [
     ['categoryId', 'Categoría', false],
     ['supportRoleId', 'Rol de soporte', false],
@@ -171,11 +221,14 @@ function sanitizeTickets(body, current) {
   patch.panelDescription = cleanText(body.panelDescription, current.panelDescription, 4_000);
   patch.footerText = cleanText(body.footerText, current.footerText, 2_048);
   patch.embedColor = cleanColor(body.embedColor, current.embedColor);
+  patch.panelImageUrl = cleanPublicUrl(body.panelImageUrl, current.panelImageUrl);
   patch.createButtonLabel = cleanText(body.createButtonLabel, current.createButtonLabel, 80);
   patch.createButtonStyle = cleanButtonStyle(body.createButtonStyle, current.createButtonStyle);
+  patch.createButtonEmoji = cleanEmoji(body.createButtonEmoji, guild, current.createButtonEmoji);
   patch.infoButtonLabel = cleanText(body.infoButtonLabel, current.infoButtonLabel, 80);
   patch.infoButtonStyle = cleanButtonStyle(body.infoButtonStyle, current.infoButtonStyle);
-  patch.extraButtons = sanitizeExtraButtons(body.extraButtons, current.extraButtons ?? []);
+  patch.infoButtonEmoji = cleanEmoji(body.infoButtonEmoji, guild, current.infoButtonEmoji);
+  patch.extraButtons = sanitizeExtraButtons(body.extraButtons, current.extraButtons ?? [], guild);
   return patch;
 }
 
@@ -194,6 +247,37 @@ function validateTicketTargets(guild, patch) {
   if (patch.logChannelId && guild.channels.cache.get(patch.logChannelId)?.type !== ChannelType.GuildText) {
     throw new Error('El canal de logs seleccionado no existe o no es de texto.');
   }
+}
+
+function cleanOptionalText(value, fallback = '', maxLength = 1_000) {
+  if (value === undefined) return fallback;
+  if (typeof value !== 'string' || value.length > maxLength) throw new Error('Uno de los textos del embed no es válido.');
+  return value.trim();
+}
+
+function sanitizeSavedEmbed(body, current = {}) {
+  const value = {
+    id: current.id,
+    name: cleanText(body.name, current.name, 80),
+    title: cleanOptionalText(body.title, current.title, 256),
+    description: cleanOptionalText(body.description, current.description, 4_000),
+    color: cleanColor(body.color, current.color ?? '#5865F2'),
+    authorName: cleanOptionalText(body.authorName, current.authorName, 256),
+    authorIconUrl: cleanPublicUrl(body.authorIconUrl, current.authorIconUrl),
+    footerText: cleanOptionalText(body.footerText, current.footerText, 2_048),
+    imageUrl: cleanPublicUrl(body.imageUrl, current.imageUrl),
+    thumbnailUrl: cleanPublicUrl(body.thumbnailUrl, current.thumbnailUrl),
+    timestamp: cleanBoolean(body.timestamp, current.timestamp ?? false, 'timestamp'),
+  };
+  if (!value.title && !value.description) throw new Error('El embed necesita título o descripción.');
+  const totalCharacters = value.title.length
+    + value.description.length
+    + value.authorName.length
+    + value.footerText.length;
+  if (totalCharacters > 6_000) {
+    throw new Error(`El embed supera el máximo total de 6000 caracteres (${totalCharacters}).`);
+  }
+  return value;
 }
 
 function rateLimitLogin(request, response, next) {
@@ -228,7 +312,7 @@ export function createWebServer({ client, store, antiRaid }) {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
         styleSrc: ["'self'"],
-        imgSrc: ["'self'", 'data:', 'https://cdn.discordapp.com'],
+        imgSrc: ["'self'", 'data:', 'https:'],
         connectSrc: ["'self'"],
       },
     },
@@ -294,6 +378,13 @@ export function createWebServer({ client, store, antiRaid }) {
     return next();
   };
 
+  const requireAnyPermission = (...permissions) => (request, response, next) => {
+    if (!permissions.some((permission) => can(request.dashboardAuth.user, permission))) {
+      return response.status(403).json({ error: 'Tu usuario no tiene permiso para este recurso.' });
+    }
+    return next();
+  };
+
   app.get('/api/auth/session', authenticate, (request, response) => {
     response.json({
       user: toPublicUser(request.dashboardAuth.user),
@@ -318,6 +409,7 @@ export function createWebServer({ client, store, antiRaid }) {
     const audit = store.getAudit().filter((entry) => {
       if (entry.module === 'Anti-Raid') return can(user, 'antiraid');
       if (entry.module === 'Tickets') return can(user, 'tickets');
+      if (entry.module === 'Embeds') return can(user, 'embeds');
       return can(user, 'users');
     });
     response.json({
@@ -341,7 +433,7 @@ export function createWebServer({ client, store, antiRaid }) {
     });
   });
 
-  app.get('/api/discord/resources', requirePermission('tickets'), (request, response) => {
+  app.get('/api/discord/resources', requireAnyPermission('tickets', 'embeds'), (_request, response) => {
     const guild = client.guilds.cache.get(config.guildId);
     if (!guild) return response.status(503).json({ error: 'Discord todavía no está conectado.' });
     const roles = guild.roles.cache
@@ -354,7 +446,13 @@ export function createWebServer({ client, store, antiRaid }) {
     const channels = guild.channels.cache
       .filter((channel) => channel.type === ChannelType.GuildText)
       .map((channel) => ({ id: channel.id, name: channel.name }));
-    return response.json({ roles, categories, channels });
+    const emojis = guild.emojis.cache.map((emoji) => ({
+      id: emoji.id,
+      name: emoji.name,
+      animated: emoji.animated,
+      url: emoji.imageURL({ size: 64 }),
+    }));
+    return response.json({ roles, categories, channels, emojis });
   });
 
   app.get('/api/antiraid', requirePermission('antiraid'), (_request, response) => {
@@ -387,9 +485,9 @@ export function createWebServer({ client, store, antiRaid }) {
   app.patch('/api/tickets', requirePermission('tickets'), async (request, response, next) => {
     try {
       const current = store.getGuildSettings(config.guildId).tickets;
-      const patch = sanitizeTickets(request.body ?? {}, current);
-      const proposed = { ...current, ...patch };
       const guild = client.guilds.cache.get(config.guildId);
+      const patch = sanitizeTickets(request.body ?? {}, current, guild);
+      const proposed = { ...current, ...patch };
       validateTicketTargets(guild, proposed);
       const permissionsSync = await syncOpenTicketPermissions(
         guild,
@@ -439,6 +537,73 @@ export function createWebServer({ client, store, antiRaid }) {
     } catch (error) {
       next(error);
     }
+  });
+
+  app.get('/api/embeds', requirePermission('embeds'), (_request, response) => {
+    response.json(store.getGuildSettings(config.guildId).embeds);
+  });
+
+  app.post('/api/embeds', requirePermission('embeds'), async (request, response, next) => {
+    try {
+      const embed = await store.saveEmbed(config.guildId, sanitizeSavedEmbed(request.body ?? {}), request.dashboardAuth.user);
+      response.status(201).json({ embed });
+    } catch (error) { next(error); }
+  });
+
+  app.patch('/api/embeds/:id', requirePermission('embeds'), async (request, response, next) => {
+    try {
+      const current = store.getGuildSettings(config.guildId).embeds.saved.find((item) => item.id === request.params.id);
+      if (!current) throw new Error('Embed no encontrado.');
+      const embed = await store.saveEmbed(config.guildId, sanitizeSavedEmbed(request.body ?? {}, current), request.dashboardAuth.user);
+      response.json({ embed });
+    } catch (error) { next(error); }
+  });
+
+  app.delete('/api/embeds/:id', requirePermission('embeds'), async (request, response, next) => {
+    try { await store.deleteEmbed(config.guildId, request.params.id, request.dashboardAuth.user); response.json({ ok: true }); }
+    catch (error) { next(error); }
+  });
+
+  app.post('/api/embeds/:id/send', requirePermission('embeds'), async (request, response, next) => {
+    try {
+      const section = store.getGuildSettings(config.guildId).embeds;
+      const embed = section.saved.find((item) => item.id === request.params.id);
+      const channelId = cleanSnowflake(request.body?.channelId, 'Canal', true);
+      const guild = client.guilds.cache.get(config.guildId);
+      const channel = guild?.channels.cache.get(channelId) ?? await guild?.channels.fetch(channelId).catch(() => null);
+      if (!embed || !channel?.isTextBased() || channel.isThread()) throw new Error('Embed o canal no disponible.');
+      await channel.send({ embeds: [buildCustomEmbed(embed)] });
+      response.json({ ok: true });
+    } catch (error) { next(error); }
+  });
+
+  app.put('/api/embeds/:id/schedule', requirePermission('embeds'), async (request, response, next) => {
+    try {
+      const channelId = cleanSnowflake(request.body?.channelId, 'Canal', true);
+      const intervalMinutes = cleanInteger(request.body ?? {}, 'intervalMinutes', 5, 43_200);
+      if (intervalMinutes === undefined) throw new Error('Debes indicar el intervalo de envío.');
+      const section = store.getGuildSettings(config.guildId).embeds;
+      if (!section.saved.some((item) => item.id === request.params.id)) throw new Error('Embed no encontrado.');
+      const guild = client.guilds.cache.get(config.guildId);
+      const channel = guild?.channels.cache.get(channelId) ?? await guild?.channels.fetch(channelId).catch(() => null);
+      if (!channel?.isTextBased() || channel.isThread()) throw new Error('El canal seleccionado no está disponible.');
+      const previous = section.schedules.find((item) => item.embedId === request.params.id);
+      const schedule = await store.saveSchedule(config.guildId, {
+        embedId: request.params.id,
+        channelId,
+        intervalMinutes,
+        enabled: cleanBoolean(request.body?.enabled, false, 'enabled'),
+        nextRunAt: Date.now() + intervalMinutes * 60_000,
+        lastRunAt: previous?.lastRunAt ?? null,
+        lastError: '',
+      }, request.dashboardAuth.user);
+      response.json({ schedule });
+    } catch (error) { next(error); }
+  });
+
+  app.delete('/api/embeds/:id/schedule', requirePermission('embeds'), async (request, response, next) => {
+    try { await store.deleteSchedule(config.guildId, request.params.id, request.dashboardAuth.user); response.json({ ok: true }); }
+    catch (error) { next(error); }
   });
 
   app.get('/api/users', requirePermission('users'), (_request, response) => {

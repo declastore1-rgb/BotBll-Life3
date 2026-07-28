@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { hashPassword } from './auth.js';
 
-export const dashboardPermissions = Object.freeze(['antiraid', 'tickets', 'users']);
+export const dashboardPermissions = Object.freeze(['antiraid', 'tickets', 'embeds', 'users']);
 
 const clone = (value) => structuredClone(value);
 const normalizeUsername = (username) => username.trim().toLowerCase();
@@ -78,6 +78,12 @@ export class SettingsStore {
     this.data.guilds[this.guildId] = {
       antiRaid: { ...clone(this.defaults.antiRaid), ...(existing.antiRaid ?? {}) },
       tickets: { ...clone(this.defaults.tickets), ...(existing.tickets ?? {}) },
+      embeds: {
+        ...clone(this.defaults.embeds),
+        ...(existing.embeds ?? {}),
+        saved: Array.isArray(existing.embeds?.saved) ? existing.embeds.saved : [],
+        schedules: Array.isArray(existing.embeds?.schedules) ? existing.embeds.schedules : [],
+      },
     };
 
     if (this.data.users.length === 0) {
@@ -159,6 +165,61 @@ export class SettingsStore {
     return this.mutate((data) => {
       data.guilds[guildId].tickets.publishedPanels = clone(panels).slice(-25);
       return clone(data.guilds[guildId].tickets.publishedPanels);
+    });
+  }
+
+  async saveEmbed(guildId, embed, actor) {
+    return this.mutate((data) => {
+      const list = data.guilds[guildId].embeds.saved;
+      const index = embed.id ? list.findIndex((item) => item.id === embed.id) : -1;
+      if (index < 0 && list.length >= 100) throw new Error('Has alcanzado el límite de 100 embeds guardados.');
+      const now = new Date().toISOString();
+      const value = { ...clone(embed), id: index >= 0 ? embed.id : randomUUID(), updatedAt: now };
+      if (index >= 0) list[index] = { ...list[index], ...value };
+      else list.push({ ...value, createdAt: now });
+      this.addAudit(actor, 'Embeds', `${index >= 0 ? 'Embed actualizado' : 'Embed creado'}: ${value.name}`);
+      return clone(index >= 0 ? list[index] : list.at(-1));
+    });
+  }
+
+  async deleteEmbed(guildId, id, actor) {
+    return this.mutate((data) => {
+      const section = data.guilds[guildId].embeds;
+      const embed = section.saved.find((item) => item.id === id);
+      if (!embed) throw new Error('Embed no encontrado.');
+      section.saved = section.saved.filter((item) => item.id !== id);
+      section.schedules = section.schedules.filter((item) => item.embedId !== id);
+      this.addAudit(actor, 'Embeds', `Embed eliminado: ${embed.name}`);
+      return true;
+    });
+  }
+
+  async saveSchedule(guildId, schedule, actor) {
+    return this.mutate((data) => {
+      const list = data.guilds[guildId].embeds.schedules;
+      const index = list.findIndex((item) => item.embedId === schedule.embedId);
+      const value = { ...clone(schedule), id: index >= 0 ? list[index].id : randomUUID() };
+      if (index >= 0) list[index] = value; else list.push(value);
+      this.addAudit(actor, 'Embeds', 'Programación actualizada');
+      return clone(value);
+    });
+  }
+
+  async deleteSchedule(guildId, embedId, actor = 'Sistema') {
+    return this.mutate((data) => {
+      const section = data.guilds[guildId].embeds;
+      section.schedules = section.schedules.filter((item) => item.embedId !== embedId);
+      this.addAudit(actor, 'Embeds', 'Programación eliminada');
+      return true;
+    });
+  }
+
+  async updateScheduleRun(guildId, id, patch) {
+    return this.mutate((data) => {
+      const schedule = data.guilds[guildId].embeds.schedules.find((item) => item.id === id);
+      if (!schedule) return null;
+      Object.assign(schedule, clone(patch));
+      return clone(schedule);
     });
   }
 

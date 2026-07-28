@@ -27,8 +27,16 @@ function resolveButtonStyle(style, fallback) {
   return BUTTON_STYLES[style] ?? BUTTON_STYLES[fallback];
 }
 
+function applyButtonEmoji(builder, emoji) {
+  if (!emoji?.name && !emoji?.id) return builder;
+  if (emoji.type === 'custom') {
+    return builder.setEmoji({ id: emoji.id, name: emoji.name, animated: Boolean(emoji.animated) });
+  }
+  return builder.setEmoji(emoji.name);
+}
+
 function buildExtraButton(button) {
-  const builder = new ButtonBuilder().setLabel(button.label);
+  const builder = applyButtonEmoji(new ButtonBuilder().setLabel(button.label), button.emoji);
   if (button.type === 'link') {
     return builder.setURL(button.value).setStyle(ButtonStyle.Link);
   }
@@ -42,20 +50,26 @@ export function buildPanel(settings) {
     .setColor(settings.embedColor)
     .setTitle(settings.panelTitle)
     .setDescription(settings.panelDescription)
-    .setFooter({ text: settings.footerText })
-    .setTimestamp();
+    .setFooter({ text: settings.footerText });
+  if (settings.panelImageUrl) embed.setImage(settings.panelImageUrl);
 
-  const row = new ActionRowBuilder().addComponents(
+  const createButton = applyButtonEmoji(
     new ButtonBuilder()
       .setCustomId(ticketIds.create)
       .setLabel(settings.createButtonLabel)
-      .setEmoji('🎫')
       .setStyle(resolveButtonStyle(settings.createButtonStyle, 'primary')),
+    settings.createButtonEmoji,
+  );
+  const infoButton = applyButtonEmoji(
     new ButtonBuilder()
       .setCustomId(ticketIds.info)
       .setLabel(settings.infoButtonLabel)
-      .setEmoji('ℹ️')
       .setStyle(resolveButtonStyle(settings.infoButtonStyle, 'secondary')),
+    settings.infoButtonEmoji,
+  );
+  const row = new ActionRowBuilder().addComponents(
+    createButton,
+    infoButton,
     ...(settings.extraButtons ?? []).map(buildExtraButton),
   );
 

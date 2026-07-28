@@ -6,6 +6,7 @@ import {
 } from 'discord.js';
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const LINK_PATTERN = /(?:https?:\/\/|www\.|discord(?:app)?\.com\/invite\/|discord\.gg\/|(?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\.)+[a-z]{2,})(?:[^\s<]*)/gi;
 
 export class AntiRaid {
   constructor(client, store) {
@@ -13,6 +14,7 @@ export class AntiRaid {
     this.store = store;
     this.joins = new Map();
     this.messages = new Map();
+    this.spamWarnings = new Map();
     this.actions = new Map();
     this.raidModeUntil = new Map();
   }
@@ -55,6 +57,9 @@ export class AntiRaid {
     for (const key of this.messages.keys()) {
       if (key.startsWith(`${guildId}:`)) this.messages.delete(key);
     }
+    for (const key of this.spamWarnings.keys()) {
+      if (key.startsWith(`${guildId}:`)) this.spamWarnings.delete(key);
+    }
     for (const key of this.actions.keys()) {
       if (key.startsWith(`${guildId}:`)) this.actions.delete(key);
     }
@@ -70,6 +75,7 @@ export class AntiRaid {
       joins: `${settings.joinThreshold}/${settings.joinWindowSeconds}s`,
       minimumAge: `${settings.minAccountAgeHours}h`,
       spam: `${settings.spamMessageThreshold}/${settings.spamWindowSeconds}s`,
+      spamWarning: settings.spamWarningEnabled ? `Aviso + sanción en ${settings.spamEscalationMinutes} min` : 'Sanción inmediata',
       mentions: settings.massMentionThreshold,
       destructive: `${settings.destructiveThreshold}/${settings.destructiveWindowSeconds}s`,
     };
@@ -189,23 +195,81 @@ export class AntiRaid {
     const now = Date.now();
     const key = `${message.guild.id}:${message.author.id}`;
     const spamWindowMs = settings.spamWindowSeconds * 1_000;
-    const timestamps = (this.messages.get(key) ?? []).filter((timestamp) => now - timestamp <= spamWindowMs);
-    timestamps.push(now);
-    this.messages.set(key, timestamps);
+    const records = (this.messages.get(key) ?? []).filter((item) => now - item.timestamp <= spamWindowMs);
+    const content = message.content.trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 300);
+    records.push({ timestamp: now, content });
+    this.messages.set(key, records);
 
     const mentionCount = message.mentions.users.size + message.mentions.roles.size + (message.mentions.everyone ? 1 : 0);
+    const linkCount = (message.content.match(LINK_PATTERN) ?? []).length;
+    const duplicateCount = content ? records.filter((item) => item.content === content).length : 0;
     const massMention = mentionCount >= settings.massMentionThreshold;
-    const spam = timestamps.length >= settings.spamMessageThreshold;
+    const spam = records.length >= settings.spamMessageThreshold
+      || duplicateCount >= settings.duplicateMessageThreshold
+      || linkCount > settings.maxLinksPerMessage;
     if (!massMention && !spam) return;
 
+    const reason = massMention ? 'menciones masivas' : linkCount > settings.maxLinksPerMessage ? 'exceso de enlaces' : 'spam';
+    if (!massMention && settings.spamWarningEnabled) {
+      const warningState = this.spamWarnings.get(key);
+      if (warningState?.phase === 'pending') {
+        this.messages.delete(key);
+        await message.delete().catch(() => null);
+        return;
+      }
+      if (!warningState || warningState.until <= now) {
+        const pendingState = { phase: 'pending', until: Number.POSITIVE_INFINITY };
+        this.spamWarnings.set(key, pendingState);
+        this.messages.delete(key);
+        await message.delete().catch(() => null);
+        const warning = await message.channel.send({
+          content: `<@${message.author.id}> ${settings.spamWarningMessage}`,
+          allowedMentions: { users: [message.author.id], roles: [], parse: [] },
+        }).catch(() => null);
+        if (!warning) {
+          if (this.spamWarnings.get(key) === pendingState) this.spamWarnings.delete(key);
+          await this.log(message.guild, 'No se pudo advertir el spam', `<@${message.author.id}> superó el límite, pero el aviso no pudo enviarse.`);
+          return;
+        }
+        if (this.spamWarnings.get(key) !== pendingState) {
+          await warning.delete().catch(() => null);
+          return;
+        }
+        const activeState = {
+          phase: 'active',
+          warnedAt: Date.now(),
+          until: Date.now() + settings.spamEscalationMinutes * 60_000,
+        };
+        this.spamWarnings.set(key, activeState);
+        const expirationDelay = activeState.until - Date.now();
+        setTimeout(() => {
+          if (this.spamWarnings.get(key) === activeState) this.spamWarnings.delete(key);
+        }, expirationDelay).unref();
+        setTimeout(() => warning.delete().catch(() => null), 12_000).unref();
+        await this.log(message.guild, 'Advertencia de spam', `<@${message.author.id}> recibió un aviso antes de la sanción.`);
+        return;
+      }
+    }
+
+    const currentState = this.spamWarnings.get(key);
+    if (currentState?.phase === 'sanctioning') {
+      this.messages.delete(key);
+      await message.delete().catch(() => null);
+      return;
+    }
+    const escalated = currentState?.phase === 'active';
+    const sanctionState = { phase: 'sanctioning', until: currentState?.until ?? now };
+    this.spamWarnings.set(key, sanctionState);
     await message.delete().catch(() => null);
-    const reason = massMention ? 'menciones masivas' : 'spam';
     const applied = await this.applyAction(message.member, reason, settings);
     this.messages.delete(key);
+    if (this.spamWarnings.get(key) === sanctionState) this.spamWarnings.delete(key);
     await this.log(
       message.guild,
-      applied ? 'Mensaje peligroso bloqueado' : 'Mensaje eliminado',
-      `<@${message.author.id}> fue detectado por **${reason}**.`,
+      applied ? 'Usuario sancionado' : 'Mensaje peligroso bloqueado',
+      escalated
+        ? `<@${message.author.id}> continuó con **${reason}** después del aviso.`
+        : `<@${message.author.id}> fue detectado por **${reason}**.`,
     );
   }
 

@@ -49,6 +49,7 @@
         <button class="nav-item active" data-page="overview"><span class="nav-icon">◈</span><span>Resumen</span></button>
         <button class="nav-item" data-page="antiraid" data-permission="antiraid"><span class="nav-icon">◇</span><span>Anti-Raid</span></button>
         <button class="nav-item" data-page="tickets" data-permission="tickets"><span class="nav-icon">▱</span><span>Tickets</span></button>
+        <button class="nav-item" data-page="embeds" data-permission="embeds"><span class="nav-icon">▤</span><span>Embeds</span></button>
         <button class="nav-item" data-page="users" data-permission="users"><span class="nav-icon">◎</span><span>Usuarios</span></button>
         <button class="nav-item" data-page="account"><span class="nav-icon">○</span><span>Mi cuenta</span></button>
       </nav>
@@ -103,10 +104,15 @@
               <label class="field"><span>Menciones máximas</span><input name="massMentionThreshold" type="number" min="2" max="100" required></label>
               <label class="field"><span>Mensajes para detectar spam</span><input name="spamMessageThreshold" type="number" min="3" max="100" required></label>
               <label class="field"><span>Ventana de spam (s)</span><input name="spamWindowSeconds" type="number" min="1" max="300" required></label>
+              <label class="field"><span>Mensajes duplicados</span><input name="duplicateMessageThreshold" type="number" min="2" max="20" required><small>Repeticiones permitidas antes de actuar.</small></label>
+              <label class="field"><span>Enlaces máximos por mensaje</span><input name="maxLinksPerMessage" type="number" min="1" max="20" required></label>
+              <label class="field"><span>Escalado por reincidencia (min)</span><input name="spamEscalationMinutes" type="number" min="1" max="1440" required></label>
               <label class="field"><span>Acciones destructivas</span><input name="destructiveThreshold" type="number" min="2" max="50" required></label>
               <label class="field"><span>Ventana destructiva (s)</span><input name="destructiveWindowSeconds" type="number" min="1" max="300" required></label>
               <label class="field"><span>Duración timeout (min)</span><input name="timeoutMinutes" type="number" min="1" max="40320" required></label>
             </div>
+            <div class="setting-row"><div><strong>Aviso antes de sancionar spam</strong><p>Envía una advertencia y escala si reincide dentro del periodo configurado.</p></div><label class="switch"><input name="spamWarningEnabled" type="checkbox"><span></span></label></div>
+            <label class="field"><span>Mensaje de advertencia de spam</span><textarea name="spamWarningMessage" rows="3" maxlength="180" required placeholder="Baja la intensidad o serás sancionado..."></textarea></label>
             <label class="field"><span>Lista blanca · IDs separados por coma</span><textarea name="trustedUserIds" rows="3" placeholder="123456789012345678, 987654321098765432"></textarea><small>El dueño del servidor y el bot siempre están protegidos.</small></label>
             <div class="form-actions"><span id="antiraid-save-state" class="save-state"></span><button class="button primary" type="submit">Guardar Anti-Raid</button></div>
           </form>
@@ -126,6 +132,7 @@
             <div class="form-grid two">
               <label class="field"><span>Título del panel</span><input name="panelTitle" maxlength="256" required></label>
               <label class="field"><span>Texto del footer</span><input name="footerText" maxlength="2048" required></label>
+              <label class="field"><span>Imagen grande del panel (HTTPS)</span><input name="panelImageUrl" type="url" maxlength="2048" placeholder="https://..."></label>
               <label class="field color-field"><span>Color del embed</span><div><input name="embedColor" type="color" value="#2b2d31"><code id="embed-color-value">#2B2D31</code></div></label>
             </div>
             <label class="field"><span>Descripción del panel</span><textarea name="panelDescription" rows="8" maxlength="4000" required></textarea></label>
@@ -134,8 +141,10 @@
             <div class="form-grid two">
               <label class="field"><span>Texto · Abrir ticket</span><input name="createButtonLabel" maxlength="80" required></label>
               <label class="field"><span>Color · Abrir ticket</span><select name="createButtonStyle"><option value="primary">Azul</option><option value="secondary">Gris</option><option value="success">Verde</option><option value="danger">Rojo</option></select></label>
+              <div class="emoji-field" data-emoji-field="createButtonEmoji"><label class="field"><span>Emoji · Abrir ticket</span><select data-emoji-type><option value="none">Sin emoji</option><option value="unicode">Unicode</option><option value="custom">Personalizado del servidor</option></select></label><label class="field" data-emoji-unicode><span>Emoji Unicode</span><input maxlength="16" placeholder="🎫"></label><label class="field hidden" data-emoji-custom><span>Emoji del servidor</span><select><option value="">Selecciona un emoji</option></select></label></div>
               <label class="field"><span>Texto · Información</span><input name="infoButtonLabel" maxlength="80" required></label>
               <label class="field"><span>Color · Información</span><select name="infoButtonStyle"><option value="primary">Azul</option><option value="secondary">Gris</option><option value="success">Verde</option><option value="danger">Rojo</option></select></label>
+              <div class="emoji-field" data-emoji-field="infoButtonEmoji"><label class="field"><span>Emoji · Información</span><select data-emoji-type><option value="none">Sin emoji</option><option value="unicode">Unicode</option><option value="custom">Personalizado del servidor</option></select></label><label class="field" data-emoji-unicode><span>Emoji Unicode</span><input maxlength="16" placeholder="ℹ️"></label><label class="field hidden" data-emoji-custom><span>Emoji del servidor</span><select><option value="">Selecciona un emoji</option></select></label></div>
             </div>
             <div class="extra-buttons-section">
               <div class="card-header"><div><div class="eyebrow">BOTONES ADICIONALES</div><h3>Acciones personalizadas</h3><p class="muted helper-copy">Añade hasta 3 respuestas privadas o enlaces.</p></div><button id="add-extra-button" class="button ghost" type="button">Añadir botón</button></div>
@@ -143,7 +152,7 @@
             </div>
             <div id="ticket-preview" class="ticket-preview">
               <div class="preview-eyebrow">VISTA PREVIA</div>
-              <article id="preview-embed" class="preview-embed"><h4 id="preview-title">BLL $ LIFE - Ticket</h4><p id="preview-description"></p><small id="preview-footer">Copyright Team Bll $ Life</small></article>
+              <article id="preview-embed" class="preview-embed"><h4 id="preview-title">BLL $ LIFE - Ticket</h4><p id="preview-description"></p><img id="preview-panel-image" class="preview-panel-image hidden" alt="Vista previa de la imagen del panel"><small id="preview-footer">Copyright Team Bll $ Life</small></article>
               <div id="preview-buttons" class="preview-buttons"></div>
             </div>
             <div class="form-actions"><span id="tickets-save-state" class="save-state"></span><button class="button primary" type="submit">Guardar Tickets</button></div>
@@ -152,6 +161,50 @@
             <div><div class="eyebrow">PUBLICAR</div><h3>Enviar panel al servidor</h3><p class="muted">Selecciona el canal. Los paneles publicados desde aquí se actualizarán automáticamente.</p></div>
             <div class="publish-controls"><select id="publish-channel"><option value="">Selecciona un canal</option></select><button id="publish-button" class="button secondary" type="button">Publicar panel</button></div>
           </article>
+        </section>
+
+        <section id="page-embeds" class="page">
+          <div class="section-heading"><div><div class="eyebrow">MENSAJES PERSONALIZADOS</div><h3>Gestor de Embeds</h3><p class="muted">Diseña, guarda, envía y programa mensajes visuales.</p></div></div>
+          <div class="subpage-tabs" role="tablist" aria-label="Apartados de embeds">
+            <button class="subpage-tab active" type="button" role="tab" aria-selected="true" data-embed-view="builder">Crear Embed</button>
+            <button class="subpage-tab" type="button" role="tab" aria-selected="false" data-embed-view="saved">Embeds Guardados</button>
+          </div>
+
+          <div id="embed-view-builder" class="embed-subpage active">
+            <div class="embed-builder-grid">
+              <form id="embed-form" class="panel-card settings-form">
+                <input name="id" type="hidden">
+                <div class="card-header"><div><div class="eyebrow">EDITOR</div><h3 id="embed-form-title">Crear Embed</h3></div><button id="embed-form-reset" class="button ghost" type="button">Limpiar</button></div>
+                <label class="field"><span>Nombre interno</span><input name="name" maxlength="80" required placeholder="Anuncio semanal"></label>
+                <div class="form-grid two">
+                  <label class="field"><span>Título</span><input name="title" maxlength="256" placeholder="Título del mensaje"></label>
+                  <label class="field color-field"><span>Color</span><div><input name="color" type="color" value="#5865f2"><code id="custom-embed-color">#5865F2</code></div></label>
+                </div>
+                <label class="field"><span>Descripción</span><textarea name="description" rows="7" maxlength="4000" placeholder="Contenido del embed..."></textarea></label>
+                <div class="form-grid two">
+                  <label class="field"><span>Nombre del autor</span><input name="authorName" maxlength="256"></label>
+                  <label class="field"><span>Icono del autor (HTTPS)</span><input name="authorIconUrl" type="url" maxlength="2048" placeholder="https://..."></label>
+                  <label class="field"><span>Texto del footer</span><input name="footerText" maxlength="2048"></label>
+                  <label class="field"><span>Imagen grande (HTTPS)</span><input name="imageUrl" type="url" maxlength="2048" placeholder="https://..."></label>
+                  <label class="field"><span>Miniatura (HTTPS)</span><input name="thumbnailUrl" type="url" maxlength="2048" placeholder="https://..."></label>
+                  <label class="check-row compact-check"><input name="timestamp" type="checkbox"><span><strong>Mostrar fecha y hora</strong><small>Añade el momento de envío.</small></span></label>
+                </div>
+                <div class="form-actions"><span id="embed-save-state" class="save-state"></span><button class="button primary" type="submit">Guardar Embed</button></div>
+              </form>
+              <aside class="panel-card embed-preview-panel">
+                <div class="eyebrow">VISTA PREVIA</div>
+                <article id="custom-embed-preview" class="custom-embed-preview">
+                  <div class="embed-preview-body"><div id="custom-preview-author" class="embed-preview-author hidden"><img id="custom-preview-author-icon" class="hidden" alt="Icono del autor"><span></span></div><h4 id="custom-preview-title">Título del mensaje</h4><p id="custom-preview-description">La vista previa aparecerá aquí mientras escribes.</p><img id="custom-preview-image" class="embed-preview-image hidden" alt="Imagen del embed"><div id="custom-preview-footer" class="embed-preview-footer hidden"><span></span><time></time></div></div>
+                  <img id="custom-preview-thumbnail" class="embed-preview-thumbnail hidden" alt="Miniatura del embed">
+                </article>
+              </aside>
+            </div>
+          </div>
+
+          <div id="embed-view-saved" class="embed-subpage">
+            <div class="section-heading compact-heading"><div><div class="eyebrow">BIBLIOTECA</div><h3>Embeds Guardados</h3><p class="muted">Administra envíos inmediatos y publicaciones recurrentes.</p></div><button id="refresh-embeds" class="button ghost" type="button">Actualizar</button></div>
+            <div id="saved-embeds-list" class="saved-embeds-list"><p class="empty-state">No hay embeds guardados.</p></div>
+          </div>
         </section>
 
         <section id="page-users" class="page">
@@ -180,6 +233,7 @@
         <label class="field"><span>Etiqueta</span><input name="label" maxlength="80" required placeholder="Reglas"></label>
         <label class="field"><span>Acción</span><select name="type"><option value="response">Respuesta privada</option><option value="link">Abrir enlace</option></select></label>
         <label id="extra-style-field" class="field"><span>Color</span><select name="style"><option value="primary">Azul</option><option value="secondary">Gris</option><option value="success">Verde</option><option value="danger">Rojo</option></select></label>
+        <div class="emoji-field modal-emoji-field" data-emoji-field="extraButtonEmoji"><label class="field"><span>Emoji</span><select data-emoji-type><option value="none">Sin emoji</option><option value="unicode">Unicode</option><option value="custom">Personalizado del servidor</option></select></label><label class="field hidden" data-emoji-unicode><span>Emoji Unicode</span><input maxlength="16" placeholder="📌"></label><label class="field hidden" data-emoji-custom><span>Emoji del servidor</span><select><option value="">Selecciona un emoji</option></select></label></div>
       </div>
       <label class="field"><span id="extra-value-label">Mensaje privado</span><textarea name="value" rows="5" maxlength="2000" required placeholder="Contenido que verá el usuario..."></textarea><small id="extra-value-help">Se mostrará únicamente al usuario que pulse el botón.</small></label>
       <p id="extra-button-error" class="form-error hidden"></p>
@@ -200,6 +254,7 @@
         <div class="permission-grid">
           <label class="check-card"><input name="permissions" type="checkbox" value="antiraid"><span><strong>Anti-Raid</strong><small>Ver y modificar protección.</small></span></label>
           <label class="check-card"><input name="permissions" type="checkbox" value="tickets"><span><strong>Tickets</strong><small>Configurar y publicar panel.</small></span></label>
+          <label class="check-card"><input name="permissions" type="checkbox" value="embeds"><span><strong>Embeds</strong><small>Crear, enviar y programar mensajes.</small></span></label>
           <label class="check-card"><input name="permissions" type="checkbox" value="users"><span><strong>Usuarios</strong><small>Crear y editar accesos.</small></span></label>
         </div>
       </fieldset>

@@ -7,6 +7,7 @@ import {
   MessageFlags,
 } from 'discord.js';
 import { AntiRaid } from './antiRaid.js';
+import { EmbedScheduler } from './embedScheduler.js';
 import { commands } from './commands.js';
 import { config, defaultGuildSettings } from './config.js';
 import { SettingsStore } from './store.js';
@@ -42,6 +43,8 @@ const client = new Client({
 
 const antiRaid = new AntiRaid(client, store);
 antiRaid.start();
+const embedScheduler = new EmbedScheduler(client, store, config.guildId);
+embedScheduler.start();
 const webServer = createWebServer({ client, store, antiRaid });
 
 client.once(Events.ClientReady, async (readyClient) => {
@@ -136,6 +139,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 async function shutdown(signal) {
   console.log(`Cerrando por ${signal}...`);
+  embedScheduler.stop();
   client.destroy();
   webServer.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 8_000).unref();
