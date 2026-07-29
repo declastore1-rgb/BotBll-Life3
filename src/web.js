@@ -13,6 +13,7 @@ import {
   verifySession,
 } from './auth.js';
 import { config } from './config.js';
+import { buildClaimKeyPanel, syncClaimKeyPublishedPanels } from './claimKey.js';
 import { buildCustomEmbed } from './embeds.js';
 import { can, dashboardPermissions, toPublicUser } from './store.js';
 import {
@@ -23,7 +24,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, '..', 'public');
-const DASHBOARD_VERSION = 'tickets-ui-20260728-6';
+const DASHBOARD_VERSION = 'claim-key-20260729-1';
 const loginAttempts = new Map();
 const SNOWFLAKE = /^\d{17,20}$/;
 const HEX_COLOR = /^#[0-9A-F]{6}$/i;
@@ -354,6 +355,64 @@ function cleanOptionalText(value, fallback = '', maxLength = 1_000) {
   return value.trim();
 }
 
+function sanitizeClaimKey(body, current, guild) {
+  const patch = {};
+  if (body.enabled !== undefined) patch.enabled = cleanBoolean(body.enabled, undefined, 'enabled');
+  patch.panelTitle = cleanText(body.panelTitle, current.panelTitle, 256);
+  patch.panelDescription = cleanText(body.panelDescription, current.panelDescription, 4_000);
+  patch.warningText = cleanText(body.warningText, current.warningText, 1_000);
+  patch.footerText = cleanText(body.footerText, current.footerText, 2_048);
+  patch.embedColor = cleanColor(body.embedColor, current.embedColor);
+  patch.authorName = cleanOptionalText(body.authorName, current.authorName, 256);
+  patch.authorIconUrl = cleanPublicUrl(body.authorIconUrl, current.authorIconUrl);
+  patch.panelImageUrl = cleanPublicUrl(body.panelImageUrl, current.panelImageUrl);
+  patch.thumbnailUrl = cleanPublicUrl(body.thumbnailUrl, current.thumbnailUrl);
+  patch.buttonLabel = cleanText(body.buttonLabel, current.buttonLabel, 80);
+  patch.buttonStyle = cleanButtonStyle(body.buttonStyle, current.buttonStyle);
+  patch.buttonColor = BUTTON_STYLE_COLORS[patch.buttonStyle];
+  patch.buttonEmoji = cleanEmoji(body.buttonEmoji, guild, current.buttonEmoji);
+
+  if (patch.panelDescription.length + patch.warningText.length + 4 > 4_096) {
+    throw new Error('La descripción y la advertencia juntas superan el límite de 4096 caracteres de Discord.');
+  }
+  const totalCharacters = patch.panelTitle.length
+    + patch.panelDescription.length
+    + patch.warningText.length
+    + patch.footerText.length
+    + patch.authorName.length;
+  if (totalCharacters > 6_000) {
+    throw new Error(`El panel supera el máximo total de 6000 caracteres (${totalCharacters}).`);
+  }
+  return patch;
+}
+
+function sanitizeClaimKeyCredentials(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 250) {
+    throw new Error('Envía entre 1 y 250 credenciales por petición.');
+  }
+  const usernames = new Set();
+  return value.map((credential, index) => {
+    const line = index + 1;
+    if (!credential || typeof credential !== 'object') {
+      throw new Error(`La credencial de la línea ${line} no es válida.`);
+    }
+    const username = typeof credential.username === 'string' ? credential.username.trim() : '';
+    const password = typeof credential.password === 'string' ? credential.password : '';
+    if (!username || username.length > 128 || /[\u0000-\u001f\u007f]/u.test(username)) {
+      throw new Error(`La línea ${line} tiene un usuario inválido (1–128 caracteres, sin controles).`);
+    }
+    if (!password || password.length > 512 || /[\u0000-\u001f\u007f]/u.test(password)) {
+      throw new Error(`La línea ${line} tiene una contraseña inválida (1–512 caracteres, sin controles).`);
+    }
+    const normalized = username.toLocaleLowerCase('en-US');
+    if (usernames.has(normalized)) {
+      throw new Error(`La línea ${line} repite un usuario de esta importación.`);
+    }
+    usernames.add(normalized);
+    return { username, password };
+  });
+}
+
 function sanitizeSavedEmbed(body, current = {}) {
   const value = {
     id: current.id,
@@ -421,7 +480,7 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
       },
     },
   }));
-  app.use(express.json({ limit: '32kb' }));
+  app.use(express.json({ limit: '64kb' }));
 
   app.get('/health', (_request, response) => {
     response.status(client.isReady() ? 200 : 503).json({
@@ -511,11 +570,15 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
     const ticketCount = guild
       ? guild.channels.cache.filter((channel) => channel.topic?.startsWith('ticket-owner:')).size
       : 0;
+    const claimKeyStats = can(user, 'claimkey')
+      ? store.getClaimKeyAdminView(config.guildId).stats
+      : null;
     const audit = store.getAudit().filter((entry) => {
       if (entry.module === 'Anti-Raid') return can(user, 'antiraid');
       if (entry.module === 'Anti-Nuke') return can(user, 'antinuke');
       if (entry.module === 'AutoMod') return can(user, 'automod');
       if (entry.module === 'Tickets') return can(user, 'tickets');
+      if (entry.module === 'Claim Key') return can(user, 'claimkey');
       if (entry.module === 'Embeds') return can(user, 'embeds');
       return can(user, 'users');
     });
@@ -533,6 +596,8 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
         antiRaidEnabled: can(user, 'antiraid') ? settings.antiRaid.enabled : null,
         raidMode: can(user, 'antiraid') ? antiRaid.isRaidMode(config.guildId) : null,
         openTickets: can(user, 'tickets') ? ticketCount : null,
+        claimKeyAvailable: claimKeyStats?.available ?? null,
+        claimKeyClaimed: claimKeyStats?.claimed ?? null,
         dashboardUsers: can(user, 'users') ? store.listUsers().length : null,
       },
       permissions: dashboardPermissions.filter((permission) => can(user, permission)),
@@ -540,7 +605,7 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
     });
   });
 
-  app.get('/api/discord/resources', requireAnyPermission('antiraid', 'antinuke', 'automod', 'tickets', 'embeds'), (_request, response) => {
+  app.get('/api/discord/resources', requireAnyPermission('antiraid', 'antinuke', 'automod', 'tickets', 'claimkey', 'embeds'), (_request, response) => {
     const guild = client.guilds.cache.get(config.guildId);
     if (!guild) return response.status(503).json({ error: 'Discord todavía no está conectado.' });
     const roles = guild.roles.cache
@@ -716,6 +781,100 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
     }
   });
 
+  app.get('/api/claim-key', requirePermission('claimkey'), (_request, response) => {
+    response.json(store.getClaimKeyAdminView(config.guildId));
+  });
+
+  app.patch('/api/claim-key', requirePermission('claimkey'), async (request, response, next) => {
+    try {
+      const current = store.getClaimKeyAdminView(config.guildId).settings;
+      const guild = client.guilds.cache.get(config.guildId);
+      const patch = sanitizeClaimKey(request.body ?? {}, current, guild);
+      let view = await store.updateClaimKeySettings(
+        config.guildId,
+        patch,
+        request.dashboardAuth.user,
+      );
+      let panelsUpdated = 0;
+      if (guild) {
+        const panelSync = await syncClaimKeyPublishedPanels(guild, view.settings);
+        panelsUpdated = panelSync.updated;
+        if (panelSync.active.length !== (view.settings.publishedPanels ?? []).length) {
+          await store.replaceClaimKeyPublishedPanels(config.guildId, panelSync.active);
+          view = store.getClaimKeyAdminView(config.guildId);
+        }
+      }
+      response.json({ ...view, panelsUpdated });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/claim-key/credentials', requirePermission('claimkey'), async (request, response, next) => {
+    try {
+      const credentials = sanitizeClaimKeyCredentials(request.body?.credentials);
+      const view = await store.addClaimKeyCredentials(
+        config.guildId,
+        credentials,
+        request.dashboardAuth.user,
+      );
+      response.status(201).json(view);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete('/api/claim-key/credentials/:id', requirePermission('claimkey'), async (request, response, next) => {
+    try {
+      const view = await store.deleteClaimKeyCredential(
+        config.guildId,
+        request.params.id,
+        request.dashboardAuth.user,
+      );
+      response.json(view);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/claim-key/publish', requirePermission('claimkey'), async (request, response, next) => {
+    try {
+      const channelId = cleanSnowflake(request.body?.channelId, 'Canal', true);
+      const guild = client.guilds.cache.get(config.guildId);
+      if (!guild) throw new Error('Discord todavía no está conectado.');
+      const channel = guild.channels.cache.get(channelId);
+      if (!channel?.isTextBased() || channel.isThread()) {
+        throw new Error('Selecciona un canal de texto que no sea un hilo.');
+      }
+      let view = store.getClaimKeyAdminView(config.guildId);
+      if (!view.settings.enabled) throw new Error('Activa Claim Key antes de publicar el panel.');
+      if (view.stats.available < 1) throw new Error('Añade al menos una credencial disponible antes de publicar.');
+      const panelSync = await syncClaimKeyPublishedPanels(guild, view.settings);
+      if (panelSync.active.length !== (view.settings.publishedPanels ?? []).length) {
+        await store.replaceClaimKeyPublishedPanels(config.guildId, panelSync.active);
+        view = store.getClaimKeyAdminView(config.guildId);
+      }
+      if ((view.settings.publishedPanels ?? []).length >= 25) {
+        throw new Error('Has alcanzado el límite de 25 paneles activos. Elimina uno en Discord antes de publicar otro.');
+      }
+      const message = await channel.send(buildClaimKeyPanel(view.settings));
+      try {
+        await store.recordClaimKeyPublishedPanel(
+          config.guildId,
+          channel.id,
+          message.id,
+          request.dashboardAuth.user,
+        );
+      } catch (error) {
+        await message.delete().catch(() => null);
+        throw error;
+      }
+      response.status(201).json({ ok: true, messageId: message.id });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get('/api/embeds', requirePermission('embeds'), (_request, response) => {
     response.json(store.getGuildSettings(config.guildId).embeds);
   });
@@ -866,10 +1025,18 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
   });
 
   app.use((error, _request, response, _next) => {
-    console.error('[Dashboard]', error);
+    const invalidJson = error.type === 'entity.parse.failed';
+    const safeMessage = invalidJson
+      ? 'La solicitud contiene JSON inválido.'
+      : error.message || 'Ocurrió un error inesperado.';
+    console.error('[Dashboard]', {
+      name: error.name || 'Error',
+      type: error.type || 'application.error',
+      status: Number(error.status) || 400,
+      message: safeMessage,
+    });
     if (response.headersSent) return;
-    const status = error.type === 'entity.parse.failed' ? 400 : 400;
-    response.status(status).json({ error: error.message || 'Ocurrió un error inesperado.' });
+    response.status(400).json({ error: safeMessage });
   });
 
   const server = app.listen(config.port, '0.0.0.0', () => {

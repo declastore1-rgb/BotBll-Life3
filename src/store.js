@@ -1,13 +1,170 @@
-import { randomUUID } from 'node:crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  randomUUID,
+} from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { hashPassword } from './auth.js';
 
-export const dashboardPermissions = Object.freeze(['antiraid', 'antinuke', 'automod', 'tickets', 'embeds', 'users']);
+export const dashboardPermissions = Object.freeze([
+  'antiraid',
+  'antinuke',
+  'automod',
+  'tickets',
+  'claimkey',
+  'embeds',
+  'users',
+]);
 
+const CLAIM_KEY_CIPHER = 'aes-256-gcm';
+const CLAIM_KEY_CONTEXT = 'bll-claim-key-credentials-v1';
+const CLAIM_KEY_MAX_IMPORT = 250;
+const CLAIM_KEY_MAX_CREDENTIALS = 5_000;
+const CLAIM_KEY_SETTING_KEYS = Object.freeze(new Set([
+  'enabled',
+  'panelTitle',
+  'panelDescription',
+  'warningText',
+  'footerText',
+  'embedColor',
+  'authorName',
+  'authorIconUrl',
+  'panelImageUrl',
+  'thumbnailUrl',
+  'buttonLabel',
+  'buttonStyle',
+  'buttonColor',
+  'buttonEmoji',
+]));
 const clone = (value) => structuredClone(value);
 const normalizeUsername = (username) => username.trim().toLowerCase();
 const actorName = (actor) => typeof actor === 'string' ? actor : actor?.username ?? 'Sistema';
+
+function deriveClaimKeyEncryptionKey(secret) {
+  if (typeof secret !== 'string' || secret.length < 32) {
+    throw new Error('Claim Key necesita un secreto de cifrado de al menos 32 caracteres.');
+  }
+  return createHash('sha256')
+    .update(CLAIM_KEY_CONTEXT)
+    .update('\0')
+    .update(secret)
+    .digest();
+}
+
+function encryptCredentialSecret(password, key) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv(CLAIM_KEY_CIPHER, key, iv);
+  const ciphertext = Buffer.concat([cipher.update(password, 'utf8'), cipher.final()]);
+  return {
+    version: 1,
+    algorithm: CLAIM_KEY_CIPHER,
+    iv: iv.toString('base64'),
+    ciphertext: ciphertext.toString('base64'),
+    authTag: cipher.getAuthTag().toString('base64'),
+  };
+}
+
+function decryptCredentialSecret(secret, key) {
+  if (
+    !secret
+    || secret.version !== 1
+    || secret.algorithm !== CLAIM_KEY_CIPHER
+    || !secret.iv
+    || !secret.ciphertext
+    || !secret.authTag
+  ) {
+    throw new Error('Una credencial guardada no tiene un formato de cifrado válido.');
+  }
+  try {
+    const decipher = createDecipheriv(CLAIM_KEY_CIPHER, key, Buffer.from(secret.iv, 'base64'));
+    decipher.setAuthTag(Buffer.from(secret.authTag, 'base64'));
+    return Buffer.concat([
+      decipher.update(Buffer.from(secret.ciphertext, 'base64')),
+      decipher.final(),
+    ]).toString('utf8');
+  } catch {
+    throw new Error('No se pudo descifrar la credencial. Revisa el secreto del dashboard.');
+  }
+}
+
+function normalizeClaimCredentialInput(value) {
+  if (!value || typeof value !== 'object') throw new Error('Una credencial no es válida.');
+  const username = typeof value.username === 'string' ? value.username.trim() : '';
+  const password = typeof value.password === 'string' ? value.password : '';
+  if (!username || username.length > 128 || /[\u0000-\u001f\u007f]/u.test(username)) {
+    throw new Error('Cada usuario debe tener entre 1 y 128 caracteres sin saltos de línea.');
+  }
+  if (!password || password.length > 512 || /[\u0000-\u001f\u007f]/u.test(password)) {
+    throw new Error('Cada contraseña debe tener entre 1 y 512 caracteres sin saltos de línea.');
+  }
+  return { username, password };
+}
+
+function normalizeStoredClaimCredential(value, key) {
+  if (!value || typeof value !== 'object') return null;
+  const username = typeof value.username === 'string' ? value.username.trim() : '';
+  if (!username || username.length > 128 || /[\u0000-\u001f\u007f]/u.test(username)) return null;
+  let secret = value.secret;
+  if (!secret && typeof value.password === 'string' && value.password) {
+    secret = encryptCredentialSecret(value.password, key);
+  }
+  if (!secret) return null;
+  const claimedBy = value.claimedBy && typeof value.claimedBy.userId === 'string'
+    ? {
+        userId: value.claimedBy.userId.slice(0, 32),
+        username: String(value.claimedBy.username ?? '').slice(0, 128),
+        globalName: String(value.claimedBy.globalName ?? '').slice(0, 128),
+        tag: String(value.claimedBy.tag ?? '').slice(0, 128),
+        claimedAt: typeof value.claimedBy.claimedAt === 'string'
+          ? value.claimedBy.claimedAt
+          : typeof value.claimedAt === 'string' ? value.claimedAt : new Date().toISOString(),
+      }
+    : null;
+  return {
+    id: typeof value.id === 'string' && value.id ? value.id : randomUUID(),
+    username,
+    secret: clone(secret),
+    status: claimedBy ? 'claimed' : 'available',
+    createdAt: typeof value.createdAt === 'string' ? value.createdAt : new Date().toISOString(),
+    claimedBy,
+  };
+}
+
+function normalizeClaimKeyPanels(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const panels = [];
+  for (const panel of value.slice(-25)) {
+    const channelId = typeof panel?.channelId === 'string' ? panel.channelId : '';
+    const messageId = typeof panel?.messageId === 'string' ? panel.messageId : '';
+    if (!channelId || !messageId || seen.has(messageId)) continue;
+    seen.add(messageId);
+    panels.push({ channelId, messageId });
+  }
+  return panels;
+}
+
+function publicClaimKeyView(section) {
+  const credentials = (section.credentials ?? []).map((credential) => ({
+    id: credential.id,
+    username: credential.username,
+    passwordMasked: '••••••••',
+    status: credential.claimedBy ? 'claimed' : 'available',
+    createdAt: credential.createdAt,
+    claimedBy: credential.claimedBy ? clone(credential.claimedBy) : null,
+  }));
+  const available = credentials.filter((credential) => credential.status === 'available').length;
+  const claimed = credentials.length - available;
+  const { credentials: _credentials, ...settings } = section;
+  return {
+    settings: clone(settings),
+    stats: { available, claimed, total: credentials.length },
+    credentials,
+  };
+}
 
 function publicUser(user) {
   const {
@@ -46,7 +203,7 @@ function validateDelegation(actor, permissions, wantsAdmin) {
 }
 
 export class SettingsStore {
-  constructor({ dataDir, guildId, defaults, adminUsername, adminPassword }) {
+  constructor({ dataDir, guildId, defaults, adminUsername, adminPassword, encryptionSecret }) {
     this.filePath = path.join(dataDir, 'bll-store.json');
     this.tempPath = `${this.filePath}.tmp`;
     this.dataDir = dataDir;
@@ -54,7 +211,9 @@ export class SettingsStore {
     this.defaults = clone(defaults);
     this.adminUsername = adminUsername;
     this.adminPassword = adminPassword;
+    this.claimKeyEncryptionKey = deriveClaimKeyEncryptionKey(encryptionSecret);
     this.data = null;
+    this.mutationData = null;
     this.writeQueue = Promise.resolve();
   }
 
@@ -67,14 +226,29 @@ export class SettingsStore {
       this.data = { version: 1, users: [], guilds: {}, audit: [] };
     }
 
+    this.data.version = Math.max(Number(this.data.version) || 1, 2);
     this.data.users ??= [];
     this.data.guilds ??= {};
     this.data.audit ??= [];
     for (const user of this.data.users) {
       user.sessionVersion ??= 1;
-      user.permissions = normalizePermissions(user.permissions);
+      user.permissions = user.isAdmin
+        ? [...dashboardPermissions]
+        : normalizePermissions(user.permissions);
     }
     const existing = this.data.guilds[this.guildId] ?? {};
+    const existingClaimKey = existing.claimKey ?? {};
+    const claimKeyCredentials = [];
+    const claimKeyUsernames = new Set();
+    for (const stored of Array.isArray(existingClaimKey.credentials) ? existingClaimKey.credentials : []) {
+      const credential = normalizeStoredClaimCredential(stored, this.claimKeyEncryptionKey);
+      if (!credential) continue;
+      const normalized = normalizeUsername(credential.username);
+      if (claimKeyUsernames.has(normalized)) continue;
+      claimKeyUsernames.add(normalized);
+      claimKeyCredentials.push(credential);
+      if (claimKeyCredentials.length >= CLAIM_KEY_MAX_CREDENTIALS) break;
+    }
     this.data.guilds[this.guildId] = {
       antiRaid: { ...clone(this.defaults.antiRaid), ...(existing.antiRaid ?? {}) },
       antiNuke: {
@@ -95,6 +269,12 @@ export class SettingsStore {
         strikes: Array.isArray(existing.autoMod?.strikes) ? existing.autoMod.strikes.slice(0, 500) : [],
       },
       tickets: { ...clone(this.defaults.tickets), ...(existing.tickets ?? {}) },
+      claimKey: {
+        ...clone(this.defaults.claimKey),
+        ...existingClaimKey,
+        credentials: claimKeyCredentials,
+        publishedPanels: normalizeClaimKeyPanels(existingClaimKey.publishedPanels),
+      },
       embeds: {
         ...clone(this.defaults.embeds),
         ...(existing.embeds ?? {}),
@@ -125,19 +305,27 @@ export class SettingsStore {
     await this.persist();
   }
 
-  async persist() {
-    await writeFile(this.tempPath, `${JSON.stringify(this.data, null, 2)}\n`, {
+  async persist(data = this.data) {
+    await writeFile(this.tempPath, `${JSON.stringify(data, null, 2)}\n`, {
       encoding: 'utf8',
       mode: 0o600,
     });
     await rename(this.tempPath, this.filePath);
   }
 
-  async mutate(mutator) {
+  async mutate(mutator, { shouldPersist = () => true } = {}) {
     let result;
     const operation = this.writeQueue.catch(() => undefined).then(async () => {
-      result = await mutator(this.data);
-      await this.persist();
+      const draft = clone(this.data);
+      this.mutationData = draft;
+      try {
+        result = await mutator(draft);
+        if (!shouldPersist(result)) return;
+        await this.persist(draft);
+        this.data = draft;
+      } finally {
+        this.mutationData = null;
+      }
     });
     this.writeQueue = operation.catch(() => undefined);
     await operation;
@@ -145,8 +333,9 @@ export class SettingsStore {
   }
 
   addAudit(actor, module, action) {
-    this.data.audit.unshift({ id: randomUUID(), actor: actorName(actor), module, action, at: new Date().toISOString() });
-    this.data.audit = this.data.audit.slice(0, 100);
+    const data = this.mutationData ?? this.data;
+    data.audit.unshift({ id: randomUUID(), actor: actorName(actor), module, action, at: new Date().toISOString() });
+    data.audit = data.audit.slice(0, 100);
   }
 
   getGuildSettings(guildId = this.guildId) {
@@ -182,6 +371,143 @@ export class SettingsStore {
     return this.mutate((data) => {
       data.guilds[guildId].tickets.publishedPanels = clone(panels).slice(-25);
       return clone(data.guilds[guildId].tickets.publishedPanels);
+    });
+  }
+
+  getClaimKeyAdminView(guildId = this.guildId) {
+    const section = this.data.guilds[guildId]?.claimKey;
+    if (!section) throw new Error('La configuración Claim Key no está disponible.');
+    return publicClaimKeyView(section);
+  }
+
+  isClaimKeyPublishedPanel(guildId, channelId, messageId) {
+    const panels = this.data.guilds[guildId]?.claimKey?.publishedPanels ?? [];
+    return panels.some((panel) => panel.channelId === channelId && panel.messageId === messageId);
+  }
+
+  async updateClaimKeySettings(guildId, patch, actor) {
+    const safePatch = {};
+    for (const [key, value] of Object.entries(patch ?? {})) {
+      if (CLAIM_KEY_SETTING_KEYS.has(key)) safePatch[key] = clone(value);
+    }
+    return this.mutate((data) => {
+      const section = data.guilds[guildId]?.claimKey;
+      if (!section) throw new Error('La configuración Claim Key no está disponible.');
+      Object.assign(section, safePatch);
+      this.addAudit(actor, 'Claim Key', 'Configuración actualizada');
+      return publicClaimKeyView(section);
+    });
+  }
+
+  async addClaimKeyCredentials(guildId, credentials, actor) {
+    if (!Array.isArray(credentials) || credentials.length < 1 || credentials.length > CLAIM_KEY_MAX_IMPORT) {
+      throw new Error(`Añade entre 1 y ${CLAIM_KEY_MAX_IMPORT} credenciales por petición.`);
+    }
+    const normalizedCredentials = credentials.map(normalizeClaimCredentialInput);
+    const incomingUsernames = new Set();
+    for (const credential of normalizedCredentials) {
+      const normalized = normalizeUsername(credential.username);
+      if (incomingUsernames.has(normalized)) {
+        throw new Error(`El usuario “${credential.username}” está repetido en la importación.`);
+      }
+      incomingUsernames.add(normalized);
+    }
+
+    return this.mutate((data) => {
+      const section = data.guilds[guildId]?.claimKey;
+      if (!section) throw new Error('La configuración Claim Key no está disponible.');
+      const existingUsernames = new Set(section.credentials.map((item) => normalizeUsername(item.username)));
+      const duplicate = normalizedCredentials.find((item) => existingUsernames.has(normalizeUsername(item.username)));
+      if (duplicate) throw new Error(`El usuario “${duplicate.username}” ya existe en el inventario.`);
+      if (section.credentials.length + normalizedCredentials.length > CLAIM_KEY_MAX_CREDENTIALS) {
+        throw new Error(`El inventario permite un máximo de ${CLAIM_KEY_MAX_CREDENTIALS} credenciales.`);
+      }
+      const createdAt = new Date().toISOString();
+      const created = normalizedCredentials.map(({ username, password }) => ({
+        id: randomUUID(),
+        username,
+        secret: encryptCredentialSecret(password, this.claimKeyEncryptionKey),
+        status: 'available',
+        createdAt,
+        claimedBy: null,
+      }));
+      section.credentials.push(...created);
+      this.addAudit(actor, 'Claim Key', `${created.length} credencial(es) añadida(s) al inventario`);
+      return publicClaimKeyView(section);
+    });
+  }
+
+  async deleteClaimKeyCredential(guildId, credentialId, actor) {
+    return this.mutate((data) => {
+      const section = data.guilds[guildId]?.claimKey;
+      if (!section) throw new Error('La configuración Claim Key no está disponible.');
+      const index = section.credentials.findIndex((credential) => credential.id === credentialId);
+      if (index < 0) throw new Error('Credencial no encontrada.');
+      const credential = section.credentials[index];
+      if (credential.claimedBy || credential.status === 'claimed') {
+        throw new Error('Las credenciales reclamadas no se pueden eliminar desde esta acción.');
+      }
+      section.credentials.splice(index, 1);
+      this.addAudit(actor, 'Claim Key', `Credencial disponible eliminada: ${credential.username}`);
+      return publicClaimKeyView(section);
+    });
+  }
+
+  async claimCredential(guildId, discordUser) {
+    const userId = typeof discordUser?.id === 'string' ? discordUser.id.trim() : '';
+    if (!userId) throw new Error('No se pudo identificar la cuenta de Discord.');
+    return this.mutate((data) => {
+      const section = data.guilds[guildId]?.claimKey;
+      if (!section?.enabled) return { status: 'disabled' };
+      if (section.credentials.some((credential) => credential.claimedBy?.userId === userId)) {
+        return { status: 'already_claimed' };
+      }
+      const credential = section.credentials.find((item) => !item.claimedBy && item.status !== 'claimed');
+      if (!credential) return { status: 'out_of_stock' };
+
+      // El descifrado ocurre antes de modificar el inventario: una clave corrupta nunca consume stock.
+      const password = decryptCredentialSecret(credential.secret, this.claimKeyEncryptionKey);
+      const claimedAt = new Date().toISOString();
+      credential.status = 'claimed';
+      credential.claimedBy = {
+        userId,
+        username: String(discordUser.username ?? '').slice(0, 128),
+        globalName: String(discordUser.globalName ?? '').slice(0, 128),
+        tag: String(discordUser.tag ?? '').slice(0, 128),
+        claimedAt,
+      };
+      const auditIdentity = credential.claimedBy.tag || credential.claimedBy.username || userId;
+      this.addAudit(auditIdentity, 'Claim Key', `Acceso entregado al Discord ID ${userId}`);
+      return {
+        status: 'claimed',
+        username: credential.username,
+        password,
+        claimedAt,
+      };
+    }, {
+      shouldPersist: (result) => result.status === 'claimed',
+    });
+  }
+
+  async recordClaimKeyPublishedPanel(guildId, channelId, messageId, actor) {
+    return this.mutate((data) => {
+      const section = data.guilds[guildId]?.claimKey;
+      if (!section) throw new Error('La configuración Claim Key no está disponible.');
+      section.publishedPanels = normalizeClaimKeyPanels([
+        ...(section.publishedPanels ?? []).filter((panel) => panel.messageId !== messageId),
+        { channelId, messageId },
+      ]);
+      this.addAudit(actor, 'Claim Key', `Panel publicado en el canal ${channelId}`);
+      return clone(section.publishedPanels);
+    });
+  }
+
+  async replaceClaimKeyPublishedPanels(guildId, panels) {
+    return this.mutate((data) => {
+      const section = data.guilds[guildId]?.claimKey;
+      if (!section) throw new Error('La configuración Claim Key no está disponible.');
+      section.publishedPanels = normalizeClaimKeyPanels(panels);
+      return clone(section.publishedPanels);
     });
   }
 

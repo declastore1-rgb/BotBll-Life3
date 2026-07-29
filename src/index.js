@@ -11,6 +11,7 @@ import { AntiRaid } from './antiRaid.js';
 import { AutoMod } from './autoMod.js';
 import { EmbedScheduler } from './embedScheduler.js';
 import { commands } from './commands.js';
+import { claimKeyIds, handleClaimKeyClaim } from './claimKey.js';
 import { config, defaultGuildSettings } from './config.js';
 import { SettingsStore } from './store.js';
 import {
@@ -45,6 +46,7 @@ const store = new SettingsStore({
   defaults: defaultGuildSettings,
   adminUsername: config.adminUsername,
   adminPassword: config.adminPassword,
+  encryptionSecret: config.sessionSecret,
 });
 await store.init();
 
@@ -145,14 +147,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (!interaction.isButton()) return;
-    if (interaction.customId === ticketIds.create) await createTicket(interaction, store);
+    if (interaction.customId === claimKeyIds.claim) await handleClaimKeyClaim(interaction, store);
+    else if (interaction.customId === ticketIds.create) await createTicket(interaction, store);
     else if (interaction.customId === ticketIds.info) await showServerInfo(interaction, store);
     else if (interaction.customId === ticketIds.close) await closeTicket(interaction, store);
     else if (interaction.customId.startsWith(ticketIds.extraPrefix)) {
       await handleExtraButton(interaction, store);
     }
   } catch (error) {
-    console.error('Error procesando una interacción:', error);
+    console.error('Error procesando una interacción.', {
+      name: error?.name || 'Error',
+      code: error?.code ?? null,
+      status: error?.status ?? null,
+    });
     const response = { content: 'Ocurrió un error al procesar la acción.', flags: MessageFlags.Ephemeral };
     if (interaction.deferred || interaction.replied) await interaction.followUp(response).catch(() => null);
     else await interaction.reply(response).catch(() => null);

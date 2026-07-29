@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090b12">
-  <meta name="app-version" content="tickets-ui-20260728-6">
+  <meta name="app-version" content="claim-key-20260729-1">
   <title>BLL $ LIFE · Control Center</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=20260728-6">
-  <script src="/assets/app.js?v=20260728-6" defer></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=claim-key-20260729-1">
+  <script src="/assets/app.js?v=claim-key-20260729-1" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -52,6 +52,7 @@
         <button class="nav-item" data-page="antinuke" data-permission="antinuke"><span class="nav-icon">⬡</span><span>Anti-Nuke</span></button>
         <button class="nav-item" data-page="automod" data-permission="automod"><span class="nav-icon">◉</span><span>AutoMod</span></button>
         <button class="nav-item" data-page="tickets" data-permission="tickets"><span class="nav-icon">▱</span><span>Tickets</span></button>
+        <button class="nav-item" data-page="claimkey" data-permission="claimkey"><span class="nav-icon">◇</span><span>Claim Key</span></button>
         <button class="nav-item" data-page="embeds" data-permission="embeds"><span class="nav-icon">▤</span><span>Embeds</span></button>
         <button class="nav-item" data-page="users" data-permission="users"><span class="nav-icon">◎</span><span>Usuarios</span></button>
         <button class="nav-item" data-page="account"><span class="nav-icon">○</span><span>Mi cuenta</span></button>
@@ -79,6 +80,7 @@
           <div class="stats-grid">
             <article class="stat-card"><span class="stat-label">Anti-Raid</span><strong id="stat-antiraid">—</strong><small id="stat-raidmode">Comprobando</small></article>
             <article class="stat-card"><span class="stat-label">Tickets abiertos</span><strong id="stat-tickets">0</strong><small>Canales activos</small></article>
+            <article class="stat-card" data-permission="claimkey"><span class="stat-label">Claim Key</span><strong id="stat-claimkey">—</strong><small id="stat-claimkey-detail">Accesos disponibles</small></article>
             <article class="stat-card"><span class="stat-label">Miembros</span><strong id="stat-members">0</strong><small id="stat-guild">Servidor</small></article>
             <article class="stat-card"><span class="stat-label">Usuarios del panel</span><strong id="stat-users">0</strong><small>Accesos configurados</small></article>
           </div>
@@ -216,6 +218,91 @@
           </article>
         </section>
 
+        <section id="page-claimkey" class="page">
+          <div class="section-heading">
+            <div>
+              <div class="eyebrow">DISTRIBUCIÓN DE ACCESOS</div>
+              <h3>Claim Key</h3>
+              <p class="muted">Publica un acceso verificable y entrega una sola credencial privada por cuenta de Discord.</p>
+            </div>
+            <span id="claim-key-stock-badge" class="badge neutral">Cargando stock</span>
+          </div>
+
+          <div class="claim-key-layout">
+            <form id="claim-key-form" class="panel-card settings-form claim-key-editor">
+              <div class="card-header"><div><div class="eyebrow">EDITOR</div><h3>Panel de reclamación</h3></div></div>
+              <div class="setting-row featured"><div><strong>Claim Key habilitado</strong><p>Permite reclamaciones desde los paneles publicados. Mantenlo apagado hasta cargar inventario.</p></div><label class="switch"><input name="enabled" type="checkbox"><span></span></label></div>
+              <div class="form-grid two">
+                <label class="field"><span>Título del embed</span><input name="panelTitle" maxlength="256" required></label>
+                <label class="field"><span>Footer</span><input name="footerText" maxlength="2048" required></label>
+              </div>
+              <label class="field"><span>Descripción</span><textarea name="panelDescription" rows="5" maxlength="4000" required></textarea></label>
+              <label class="field"><span>Texto de advertencia</span><textarea name="warningText" rows="3" maxlength="1000" required></textarea><small>Debe describir una condición real del acceso.</small></label>
+              <div class="form-grid two">
+                <label class="field"><span>Nombre del autor</span><input name="authorName" maxlength="256" placeholder="Opcional"></label>
+                <label class="field"><span>Icono del autor (HTTPS)</span><input name="authorIconUrl" type="url" maxlength="2048" placeholder="https://..."></label>
+                <label class="field"><span>Imagen grande (HTTPS)</span><input name="panelImageUrl" type="url" maxlength="2048" placeholder="https://..."></label>
+                <label class="field"><span>Miniatura (HTTPS)</span><input name="thumbnailUrl" type="url" maxlength="2048" placeholder="https://..."></label>
+                <label class="field color-field"><span>Color del embed</span><div><input name="embedColor" type="color" value="#5865f2"><code id="claim-key-color-value">#5865F2</code></div></label>
+                <label class="field"><span>Texto del botón</span><input name="buttonLabel" maxlength="80" required></label>
+              </div>
+              <label class="field color-field ticket-button-color-field"><span>Color del botón</span><select class="ticket-button-style-select" name="buttonStyle" aria-label="Color del botón Obtener clave"><option value="primary">Azul</option><option value="secondary">Gris</option><option value="success">Verde</option><option value="danger">Rojo</option></select><small>Discord solo admite azul, gris, verde y rojo.</small></label>
+              <div class="emoji-field claim-key-emoji" data-emoji-field="claimKeyButtonEmoji">
+                <label class="field"><span>Emoji tradicional</span><input data-emoji-unicode type="text" maxlength="16" inputmode="text" placeholder="🔐" aria-label="Emoji tradicional del botón"><small>Escribe un único emoji o elige uno personalizado.</small></label>
+                <label class="field" data-emoji-custom><span>Emoji del servidor</span><select class="emoji-native-select" aria-label="Emoji personalizado del botón Claim Key"><option value="">Sin emoji personalizado</option></select></label>
+              </div>
+              <div class="form-actions"><span id="claim-key-save-state" class="save-state"></span><button class="button primary" type="submit">Guardar Claim Key</button></div>
+            </form>
+
+            <aside class="panel-card claim-key-preview-panel">
+              <div><div class="eyebrow">VISTA PREVIA</div><h3>Mensaje en Discord</h3><p class="muted helper-copy">La entrega final será privada y solo visible para quien reclame.</p></div>
+              <div class="claim-key-discord-preview">
+                <article id="claim-key-preview-embed" class="claim-key-preview-embed">
+                  <div class="claim-key-preview-body">
+                    <div id="claim-key-preview-author" class="embed-preview-author hidden"><img id="claim-key-preview-author-icon" class="hidden" alt="Icono del autor"><span></span></div>
+                    <h4 id="claim-key-preview-title">BLL$LIFE · Acceso</h4>
+                    <p id="claim-key-preview-description"></p>
+                    <p id="claim-key-preview-warning" class="claim-key-warning"></p>
+                    <img id="claim-key-preview-image" class="embed-preview-image hidden" alt="Imagen del panel Claim Key">
+                    <small id="claim-key-preview-footer">BLL$LIFE Access</small>
+                  </div>
+                  <img id="claim-key-preview-thumbnail" class="embed-preview-thumbnail hidden" alt="Miniatura del panel Claim Key">
+                </article>
+                <div class="preview-buttons"><span id="claim-key-preview-button" class="discord-button primary">Obtener clave</span></div>
+              </div>
+            </aside>
+          </div>
+
+          <article class="panel-card publish-card claim-key-publish-card">
+            <div><div class="eyebrow">PUBLICACIÓN</div><h3>Enviar panel al servidor</h3><p>Requiere Claim Key activo y al menos una credencial disponible. Los paneles guardados se sincronizan al editar.</p><small id="claim-key-publish-state" class="save-state"></small></div>
+            <div class="publish-controls"><select id="claim-key-publish-channel"><option value="">Selecciona un canal</option></select><button id="claim-key-publish-button" class="button secondary" type="button">Publicar panel</button></div>
+          </article>
+
+          <section class="panel-card claim-key-inventory">
+            <div class="card-header claim-key-inventory-header"><div><div class="eyebrow">INVENTARIO CIFRADO</div><h3>Credenciales de acceso</h3><p class="muted helper-copy">Las contraseñas se cifran al guardar y nunca vuelven a mostrarse en el dashboard.</p></div></div>
+            <div class="claim-key-stats" aria-label="Resumen del inventario">
+              <article class="claim-key-stat"><span>Disponibles</span><strong id="claim-key-available">0</strong></article>
+              <article class="claim-key-stat"><span>Reclamadas</span><strong id="claim-key-claimed">0</strong></article>
+              <article class="claim-key-stat"><span>Total</span><strong id="claim-key-total">0</strong></article>
+            </div>
+            <div class="claim-key-inventory-tools">
+              <form id="claim-key-single-form" class="claim-key-tool" autocomplete="off">
+                <div><div class="eyebrow">ALTA INDIVIDUAL</div><h4>Añadir credencial</h4></div>
+                <label class="field"><span>Usuario</span><input name="username" maxlength="128" autocomplete="off" required></label>
+                <label class="field"><span>Contraseña</span><input name="password" type="password" maxlength="512" autocomplete="new-password" required></label>
+                <button class="button primary" type="submit">Añadir al inventario</button>
+              </form>
+              <form id="claim-key-bulk-form" class="claim-key-tool" autocomplete="off">
+                <div><div class="eyebrow">IMPORTACIÓN MASIVA</div><h4>Añadir varias credenciales</h4></div>
+                <label class="field"><span>Una credencial por línea</span><textarea name="credentials" rows="7" maxlength="180000" spellcheck="false" placeholder="usuario:contraseña\notro-usuario:contraseña:con:dos-puntos" required></textarea><small>Se divide por el primer “:”. Máximo 250 registros por importación.</small></label>
+                <button class="button secondary" type="submit">Importar credenciales</button>
+              </form>
+            </div>
+            <div class="claim-key-list-heading"><div><div class="eyebrow">REGISTROS</div><h4>Inventario administrativo</h4></div><span class="muted">Las credenciales reclamadas se conservan como prueba de asignación.</span></div>
+            <div id="claim-key-list" class="claim-key-list"><p class="empty-state">No hay credenciales guardadas.</p></div>
+          </section>
+        </section>
+
         <section id="page-embeds" class="page">
           <div class="section-heading"><div><div class="eyebrow">MENSAJES PERSONALIZADOS</div><h3>Gestor de Embeds</h3><p class="muted">Diseña, guarda, envía y programa mensajes visuales.</p></div></div>
           <div class="subpage-tabs" role="tablist" aria-label="Apartados de embeds">
@@ -309,6 +396,7 @@
           <label class="check-card"><input name="permissions" type="checkbox" value="antinuke"><span><strong>Anti-Nuke</strong><small>Restauraciones y modo de emergencia.</small></span></label>
           <label class="check-card"><input name="permissions" type="checkbox" value="automod"><span><strong>AutoMod</strong><small>Filtros y sanciones de contenido.</small></span></label>
           <label class="check-card"><input name="permissions" type="checkbox" value="tickets"><span><strong>Tickets</strong><small>Configurar y publicar panel.</small></span></label>
+          <label class="check-card"><input name="permissions" type="checkbox" value="claimkey"><span><strong>Claim Key</strong><small>Configurar panel, inventario y entregas.</small></span></label>
           <label class="check-card"><input name="permissions" type="checkbox" value="embeds"><span><strong>Embeds</strong><small>Crear, enviar y programar mensajes.</small></span></label>
           <label class="check-card"><input name="permissions" type="checkbox" value="users"><span><strong>Usuarios</strong><small>Crear y editar accesos.</small></span></label>
         </div>

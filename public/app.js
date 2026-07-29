@@ -5,6 +5,11 @@ const state = {
   resources: null,
   users: [],
   extraButtons: [],
+  claimKey: {
+    settings: null,
+    stats: { available: 0, claimed: 0, total: 0 },
+    credentials: [],
+  },
   embeds: [],
   schedules: [],
 };
@@ -14,6 +19,7 @@ const pages = {
   antinuke: 'Anti-Nuke',
   automod: 'AutoMod',
   tickets: 'Tickets',
+  claimkey: 'Claim Key',
   embeds: 'Embeds',
   users: 'Usuarios',
   account: 'Mi cuenta',
@@ -96,6 +102,13 @@ async function loadOverview() {
     ? 'Módulo restringido'
     : data.stats.raidMode ? 'Modo raid activado' : 'Vigilancia normal';
   $('#stat-tickets').textContent = data.stats.openTickets ?? '—';
+  const claimKeyStat = $('#stat-claimkey');
+  if (claimKeyStat) {
+    claimKeyStat.textContent = data.stats.claimKeyAvailable ?? '—';
+    $('#stat-claimkey-detail').textContent = data.stats.claimKeyClaimed === null
+      ? 'Módulo restringido'
+      : `${data.stats.claimKeyClaimed} reclamadas`;
+  }
   $('#stat-members').textContent = Number(data.guild.members).toLocaleString('es-ES');
   $('#stat-guild').textContent = data.guild.name;
   $('#stat-users').textContent = data.stats.dashboardUsers ?? '—';
@@ -148,6 +161,7 @@ async function openPage(name) {
     if (name === 'antinuke') await loadAntiNuke();
     if (name === 'automod') await loadAutoMod();
     if (name === 'tickets') await loadTickets();
+    if (name === 'claimkey') await loadClaimKey();
     if (name === 'embeds') await loadEmbeds();
     if (name === 'users') await loadUsers();
   } catch (error) { toast(error.message, 'error'); }
@@ -289,6 +303,19 @@ function syncEmojiPicker(select) {
   }
 }
 
+function updateEmojiFieldPreview(select) {
+  const name = select?.closest('[data-emoji-field]')?.dataset.emojiField;
+  if (name === 'claimKeyButtonEmoji') updateClaimKeyPreview();
+  else updateTicketPreview();
+}
+
+function clearUnicodeEmoji(field) {
+  if (!field) return;
+  field.dataset.unicodeEmoji = '';
+  const input = $('[data-emoji-unicode]', field);
+  if (input) input.value = '';
+}
+
 function renderEmojiPicker(select, query = '') {
   const picker = select._visualEmojiPicker;
   const cleanQuery = query.trim().toLocaleLowerCase('es');
@@ -306,9 +333,10 @@ function renderEmojiPicker(select, query = '') {
     clear.addEventListener('click', (event) => {
       event.preventDefault(); event.stopPropagation();
       select.value = '';
+      clearUnicodeEmoji(select.closest('[data-emoji-field]'));
       syncEmojiPicker(select);
       closeEmojiPicker(select);
-      updateTicketPreview();
+      updateEmojiFieldPreview(select);
     });
     buttons.push(clear);
   }
@@ -328,9 +356,10 @@ function renderEmojiPicker(select, query = '') {
     button.addEventListener('click', (event) => {
       event.preventDefault(); event.stopPropagation();
       select.value = emoji.id;
+      clearUnicodeEmoji(select.closest('[data-emoji-field]'));
       syncEmojiPicker(select);
       closeEmojiPicker(select);
-      updateTicketPreview();
+      updateEmojiFieldPreview(select);
     });
     buttons.push(button);
   }
@@ -400,14 +429,22 @@ function setEmojiField(name, emoji) {
   const field = emojiField(name);
   if (!field) return;
   const customSelect = $('[data-emoji-custom] select', field);
+  const unicode = emoji?.type === 'unicode' ? emoji.name : '';
+  field.dataset.unicodeEmoji = unicode || '';
+  const unicodeInput = $('[data-emoji-unicode]', field);
+  if (unicodeInput) unicodeInput.value = unicode || '';
   customSelect.value = emoji?.type === 'custom' ? emoji.id : '';
   syncEmojiPicker(customSelect);
 }
 
 function readEmojiField(name) {
   const field = emojiField(name);
+  if (!field) return null;
   const id = $('[data-emoji-custom] select', field).value;
-  return id ? { type: 'custom', id } : null;
+  if (id) return { type: 'custom', id };
+  const unicodeInput = $('[data-emoji-unicode]', field);
+  const unicode = (unicodeInput?.value ?? field.dataset.unicodeEmoji ?? '').trim();
+  return unicode ? { type: 'unicode', name: unicode } : null;
 }
 
 function appendEmojiLabel(element, emoji, label) {
@@ -446,6 +483,11 @@ function syncTicketButtonStylePicker(select) {
   }
 }
 
+function updateButtonStylePreview(select) {
+  if (select?.closest('#claim-key-form')) updateClaimKeyPreview();
+  else updateTicketPreview();
+}
+
 function ensureTicketButtonStylePicker(select) {
   if (!select) return;
   select.classList.add('ticket-button-style-select');
@@ -467,7 +509,7 @@ function ensureTicketButtonStylePicker(select) {
       button.addEventListener('click', () => {
         select.value = style;
         syncTicketButtonStylePicker(select);
-        updateTicketPreview();
+        updateButtonStylePreview(select);
       });
       return button;
     });
@@ -602,6 +644,236 @@ function openExtraButtonDialog(button = null) {
   $('#extra-button-title').textContent = button ? 'Editar botón' : 'Nuevo botón';
   updateExtraButtonFields();
   $('#extra-button-dialog').showModal();
+}
+
+function applyClaimKeyView(data) {
+  state.claimKey.settings = structuredClone(data.settings ?? {});
+  state.claimKey.stats = {
+    available: Number(data.stats?.available) || 0,
+    claimed: Number(data.stats?.claimed) || 0,
+    total: Number(data.stats?.total) || 0,
+  };
+  state.claimKey.credentials = Array.isArray(data.credentials)
+    ? data.credentials.map((credential) => structuredClone(credential))
+    : [];
+  renderClaimKeyStats();
+  renderClaimKeyInventory();
+}
+
+async function loadClaimKey() {
+  const [data, resources] = await Promise.all([api('/api/claim-key'), getResources()]);
+  applyClaimKeyView(data);
+  const form = $('#claim-key-form');
+  fillForm(form, data.settings);
+  ensureTicketButtonStylePicker(form.elements.buttonStyle);
+  syncTicketButtonStylePicker(form.elements.buttonStyle);
+  populateSelect($('#claim-key-publish-channel'), resources.channels, '', '#');
+  populateEmojiSelectors(resources);
+  setEmojiField('claimKeyButtonEmoji', data.settings.buttonEmoji);
+  updateClaimKeyPreview();
+}
+
+function claimKeyPayload() {
+  const form = $('#claim-key-form');
+  const body = formObject(form);
+  body.buttonEmoji = readEmojiField('claimKeyButtonEmoji');
+  return body;
+}
+
+function updateClaimKeyPreview() {
+  const form = $('#claim-key-form');
+  if (!form) return;
+  const color = form.elements.embedColor.value || '#5865F2';
+  $('#claim-key-color-value').textContent = color.toUpperCase();
+  $('#claim-key-preview-embed').style.borderLeftColor = color;
+  $('#claim-key-preview-title').textContent = form.elements.panelTitle.value.trim() || 'Título del panel';
+  $('#claim-key-preview-description').textContent = form.elements.panelDescription.value.trim() || 'Descripción del acceso.';
+  $('#claim-key-preview-warning').textContent = form.elements.warningText.value.trim() || 'Advertencia del acceso.';
+  $('#claim-key-preview-footer').textContent = form.elements.footerText.value.trim() || 'BLL$LIFE Access';
+
+  const author = $('#claim-key-preview-author');
+  const authorName = form.elements.authorName.value.trim();
+  author.classList.toggle('hidden', !authorName);
+  $('span', author).textContent = authorName;
+  setPreviewImage($('#claim-key-preview-author-icon'), authorName ? form.elements.authorIconUrl.value.trim() : '');
+  setPreviewImage($('#claim-key-preview-image'), form.elements.panelImageUrl.value.trim());
+  setPreviewImage($('#claim-key-preview-thumbnail'), form.elements.thumbnailUrl.value.trim());
+
+  const button = $('#claim-key-preview-button');
+  button.className = `discord-button ${form.elements.buttonStyle.value || 'primary'}`;
+  button.classList.toggle('disabled', !form.elements.enabled.checked);
+  button.setAttribute('aria-disabled', String(!form.elements.enabled.checked));
+  button.replaceChildren();
+  appendEmojiLabel(
+    button,
+    readEmojiField('claimKeyButtonEmoji'),
+    form.elements.buttonLabel.value.trim() || 'Obtener clave',
+  );
+}
+
+function renderClaimKeyStats() {
+  const { available, claimed, total } = state.claimKey.stats;
+  $('#claim-key-available').textContent = available.toLocaleString('es-ES');
+  $('#claim-key-claimed').textContent = claimed.toLocaleString('es-ES');
+  $('#claim-key-total').textContent = total.toLocaleString('es-ES');
+  const badge = $('#claim-key-stock-badge');
+  badge.textContent = `${available.toLocaleString('es-ES')} disponible${available === 1 ? '' : 's'}`;
+  badge.className = `badge ${available > 0 ? 'success' : total > 0 ? 'danger' : 'neutral'}`;
+}
+
+function formatClaimKeyDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? 'Fecha no disponible'
+    : date.toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function createClaimKeyCredentialItem(credential) {
+  const item = document.createElement('article');
+  item.className = 'claim-key-item';
+
+  const identity = document.createElement('div');
+  identity.className = 'claim-key-identity';
+  const username = document.createElement('strong');
+  username.textContent = credential.username;
+  const secret = document.createElement('code');
+  secret.className = 'credential-secret';
+  secret.textContent = credential.passwordMasked || '••••••••';
+  identity.append(username, secret);
+
+  const status = document.createElement('span');
+  status.className = `badge claim-key-status ${credential.status === 'claimed' ? 'neutral' : 'success'}`;
+  status.textContent = credential.status === 'claimed' ? 'Reclamada' : 'Disponible';
+
+  const meta = document.createElement('div');
+  meta.className = 'claim-key-meta';
+  const id = document.createElement('span');
+  id.textContent = `ID interno: ${credential.id}`;
+  const created = document.createElement('span');
+  created.textContent = `Creada: ${formatClaimKeyDate(credential.createdAt)}`;
+  meta.append(id, created);
+
+  const details = document.createElement('div');
+  details.className = 'claim-key-claimant';
+  if (credential.status === 'claimed' && credential.claimedBy) {
+    const claimant = document.createElement('strong');
+    claimant.textContent = credential.claimedBy.globalName
+      || credential.claimedBy.username
+      || credential.claimedBy.tag
+      || 'Cuenta de Discord';
+    const publicIdentity = document.createElement('span');
+    const labels = [credential.claimedBy.tag, credential.claimedBy.username]
+      .filter((value, index, values) => value && values.indexOf(value) === index);
+    publicIdentity.textContent = labels.join(' · ') || 'Nombre público no disponible';
+    const discordId = document.createElement('span');
+    discordId.textContent = `Discord ID: ${credential.claimedBy.userId}`;
+    const claimedAt = document.createElement('span');
+    claimedAt.textContent = `Reclamada: ${formatClaimKeyDate(credential.claimedBy.claimedAt)}`;
+    details.append(claimant, publicIdentity, discordId, claimedAt);
+  } else {
+    const available = document.createElement('span');
+    available.textContent = 'Sin reclamante asignado.';
+    details.append(available);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'claim-key-item-actions';
+  if (credential.status === 'available') {
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'button danger';
+    remove.textContent = 'Eliminar';
+    remove.addEventListener('click', () => deleteClaimKeyCredential(credential, remove));
+    actions.append(remove);
+  } else {
+    const locked = document.createElement('span');
+    locked.className = 'claim-key-locked';
+    locked.textContent = 'Registro protegido';
+    actions.append(locked);
+  }
+
+  item.append(identity, status, meta, details, actions);
+  return item;
+}
+
+function renderClaimKeyInventory() {
+  const list = $('#claim-key-list');
+  if (!state.claimKey.credentials.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'No hay credenciales guardadas.';
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...state.claimKey.credentials.map(createClaimKeyCredentialItem));
+}
+
+function parseBulkClaimCredentials(source) {
+  const credentials = [];
+  const usernames = new Set();
+  const lines = String(source).split(/\r?\n/u);
+  lines.forEach((line, index) => {
+    if (!line.trim()) return;
+    const lineNumber = index + 1;
+    const separator = line.indexOf(':');
+    if (separator < 1) throw new Error(`Línea ${lineNumber}: usa el formato usuario:contraseña.`);
+    const username = line.slice(0, separator).trim();
+    const password = line.slice(separator + 1);
+    if (!username || username.length > 128 || /[\u0000-\u001f\u007f]/u.test(username)) {
+      throw new Error(`Línea ${lineNumber}: el usuario no es válido.`);
+    }
+    if (!password || password.length > 512 || /[\u0000-\u001f\u007f]/u.test(password)) {
+      throw new Error(`Línea ${lineNumber}: la contraseña no es válida.`);
+    }
+    const normalized = username.toLocaleLowerCase('en-US');
+    if (usernames.has(normalized)) throw new Error(`Línea ${lineNumber}: el usuario está repetido.`);
+    usernames.add(normalized);
+    credentials.push({ username, password });
+  });
+  if (!credentials.length) throw new Error('Añade al menos una credencial válida.');
+  if (credentials.length > 250) throw new Error('La importación admite un máximo de 250 credenciales.');
+  return credentials;
+}
+
+function splitClaimKeyCredentialBatches(credentials) {
+  const maximumBytes = 60 * 1024;
+  const batches = [];
+  let current = [];
+  for (const credential of credentials) {
+    const candidate = [...current, credential];
+    const bytes = new TextEncoder().encode(JSON.stringify({ credentials: candidate })).byteLength;
+    if (bytes > maximumBytes && current.length) {
+      batches.push(current);
+      current = [credential];
+    } else {
+      current = candidate;
+    }
+  }
+  if (current.length) batches.push(current);
+  return batches;
+}
+
+async function addClaimKeyCredentials(credentials) {
+  const existing = new Set(state.claimKey.credentials.map((item) => item.username.toLocaleLowerCase('en-US')));
+  const duplicate = credentials.find((item) => existing.has(item.username.toLocaleLowerCase('en-US')));
+  if (duplicate) throw new Error(`El usuario “${duplicate.username}” ya existe en el inventario.`);
+  let data = null;
+  for (const batch of splitClaimKeyCredentialBatches(credentials)) {
+    data = await api('/api/claim-key/credentials', {
+      method: 'POST',
+      body: { credentials: batch },
+    });
+  }
+  applyClaimKeyView(data);
+}
+
+async function deleteClaimKeyCredential(credential, button) {
+  if (!confirm(`¿Eliminar la credencial disponible “${credential.username}”? Esta acción no se puede deshacer.`)) return;
+  await performButtonAction(button, 'Eliminando...', async () => {
+    const data = await api(`/api/claim-key/credentials/${encodeURIComponent(credential.id)}`, { method: 'DELETE' });
+    applyClaimKeyView(data);
+    toast('Credencial eliminada del inventario.');
+  });
 }
 
 function switchEmbedView(name) {
@@ -1079,6 +1351,87 @@ $('#publish-button').addEventListener('click', async () => {
   try {
     await api('/api/tickets/publish', { method: 'POST', body: { channelId } });
     toast('Panel publicado correctamente.');
+  } catch (error) { toast(error.message, 'error'); }
+  finally { setButtonBusy(button, false); }
+});
+
+const claimKeyUnicodeInput = $('#claim-key-form [data-emoji-unicode]');
+claimKeyUnicodeInput.addEventListener('input', () => {
+  const field = emojiField('claimKeyButtonEmoji');
+  field.dataset.unicodeEmoji = claimKeyUnicodeInput.value.trim();
+  const customSelect = $('[data-emoji-custom] select', field);
+  if (customSelect.value) {
+    customSelect.value = '';
+    syncEmojiPicker(customSelect);
+  }
+  updateClaimKeyPreview();
+});
+$('#claim-key-form').addEventListener('input', updateClaimKeyPreview);
+$('#claim-key-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('[type="submit"]');
+  setButtonBusy(button, true, 'Guardando...');
+  try {
+    const data = await api('/api/claim-key', { method: 'PATCH', body: claimKeyPayload() });
+    applyClaimKeyView(data);
+    fillForm(form, data.settings);
+    syncTicketButtonStylePicker(form.elements.buttonStyle);
+    setEmojiField('claimKeyButtonEmoji', data.settings.buttonEmoji);
+    updateClaimKeyPreview();
+    const updated = Number(data.panelsUpdated) || 0;
+    $('#claim-key-save-state').textContent = updated
+      ? `${updated} panel(es) sincronizado(s)`
+      : 'Configuración guardada';
+    toast(updated
+      ? `Claim Key guardado y ${updated} panel(es) actualizado(s).`
+      : 'Configuración Claim Key guardada.');
+  } catch (error) { toast(error.message, 'error'); }
+  finally { setButtonBusy(button, false); }
+});
+
+$('#claim-key-single-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('[type="submit"]');
+  setButtonBusy(button, true, 'Cifrando...');
+  try {
+    await addClaimKeyCredentials([{
+      username: form.elements.username.value.trim(),
+      password: form.elements.password.value,
+    }]);
+    form.reset();
+    toast('Credencial cifrada y añadida al inventario.');
+  } catch (error) {
+    form.elements.password.value = '';
+    toast(error.message, 'error');
+  } finally { setButtonBusy(button, false); }
+});
+
+$('#claim-key-bulk-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('[type="submit"]');
+  setButtonBusy(button, true, 'Importando...');
+  try {
+    const credentials = parseBulkClaimCredentials(form.elements.credentials.value);
+    await addClaimKeyCredentials(credentials);
+    form.elements.credentials.value = '';
+    toast(`${credentials.length} credencial(es) cifrada(s) e importada(s).`);
+  } catch (error) { toast(error.message, 'error'); }
+  finally { setButtonBusy(button, false); }
+});
+
+$('#claim-key-publish-button').addEventListener('click', async () => {
+  const button = $('#claim-key-publish-button');
+  const channelId = $('#claim-key-publish-channel').value;
+  if (!channelId) return toast('Selecciona un canal para publicar Claim Key.', 'error');
+  setButtonBusy(button, true, 'Publicando...');
+  try {
+    await api('/api/claim-key/publish', { method: 'POST', body: { channelId } });
+    $('#claim-key-publish-state').textContent = 'Panel publicado y guardado para sincronización.';
+    toast('Panel Claim Key publicado correctamente.');
+    await loadClaimKey();
   } catch (error) { toast(error.message, 'error'); }
   finally { setButtonBusy(button, false); }
 });

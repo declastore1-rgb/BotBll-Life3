@@ -23,12 +23,12 @@
   --info: #63a4ff;
   --radius-xs: 8px;
   --radius-sm: 11px;
-  --radius: 16px;
-  --radius-lg: 22px;
-  --radius-xl: 28px;
-  --shadow-sm: 0 8px 24px rgba(0, 0, 0, .18);
-  --shadow: 0 20px 58px rgba(0, 0, 0, .28);
-  --shadow-lg: 0 32px 90px rgba(0, 0, 0, .42);
+  --radius: 14px;
+  --radius-lg: 19px;
+  --radius-xl: 24px;
+  --shadow-sm: 0 7px 20px rgba(0, 0, 0, .16);
+  --shadow: 0 16px 44px rgba(0, 0, 0, .24);
+  --shadow-lg: 0 26px 72px rgba(0, 0, 0, .36);
   --focus-ring: 0 0 0 4px rgba(155, 124, 255, .14);
   --sidebar-width: 264px;
   --topbar-height: 76px;
@@ -136,8 +136,8 @@ textarea {
   position: fixed;
   z-index: 0;
   border-radius: 999px;
-  opacity: .11;
-  filter: blur(92px);
+  opacity: .075;
+  filter: blur(104px);
   pointer-events: none;
 }
 
@@ -477,8 +477,8 @@ textarea:disabled {
   background:
     linear-gradient(180deg, rgba(14, 16, 26, .97), rgba(8, 10, 17, .96)),
     var(--bg);
-  box-shadow: 12px 0 42px rgba(0, 0, 0, .12);
-  backdrop-filter: blur(18px);
+  box-shadow: 12px 0 34px rgba(0, 0, 0, .1);
+  backdrop-filter: blur(12px);
 }
 
 .sidebar-brand {
@@ -606,8 +606,8 @@ textarea:disabled {
   padding: 0 clamp(20px, 3vw, 36px);
   border-bottom: 1px solid var(--line);
   background: rgba(7, 9, 16, .78);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, .08);
-  backdrop-filter: blur(18px) saturate(125%);
+  box-shadow: 0 7px 24px rgba(0, 0, 0, .07);
+  backdrop-filter: blur(12px) saturate(115%);
 }
 
 .topbar h2 {
@@ -784,7 +784,7 @@ textarea:disabled {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background:
-    linear-gradient(145deg, rgba(19, 22, 34, .94), rgba(12, 14, 23, .93)),
+    linear-gradient(180deg, rgba(18, 21, 32, .97), rgba(12, 15, 24, .96)),
     var(--surface);
   box-shadow: var(--shadow-sm);
 }
@@ -1362,6 +1362,355 @@ textarea:disabled {
 
 .publish-controls select {
   min-width: 225px;
+}
+
+/* Claim Key */
+.claim-key-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.12fr) minmax(340px, .88fr);
+  align-items: start;
+  gap: 16px;
+}
+
+.claim-key-editor {
+  min-width: 0;
+}
+
+.claim-key-preview-panel {
+  position: sticky;
+  top: calc(var(--topbar-height) + 20px);
+  display: grid;
+  gap: 16px;
+  border-color: rgba(91, 140, 255, .16);
+  background: #10141f;
+}
+
+.claim-key-discord-preview {
+  display: grid;
+  gap: 9px;
+  padding: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .06);
+  border-radius: 12px;
+  background: #313338;
+  box-shadow: inset 0 1px rgba(255, 255, 255, .025);
+}
+
+.claim-key-preview-embed {
+  min-width: 0;
+  display: flex;
+  padding: 16px;
+  overflow: hidden;
+  border-left: 4px solid #5865f2;
+  border-radius: 4px;
+  background: #2b2d31;
+}
+
+.claim-key-preview-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.claim-key-preview-embed h4 {
+  margin: 0 0 8px;
+  color: #f2f3f5;
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.claim-key-preview-embed > .claim-key-preview-body > p {
+  margin: 0;
+  color: #dbdee1;
+  font-size: 11px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.claim-key-preview-embed .claim-key-warning {
+  margin-top: 12px;
+  padding: 9px 10px;
+  border-left: 2px solid #6d7af5;
+  border-radius: 2px 5px 5px 2px;
+  background: rgba(88, 101, 242, .09);
+  color: #cfd2dc;
+}
+
+.claim-key-preview-embed > .claim-key-preview-body > small {
+  display: block;
+  margin-top: 13px;
+  color: #a8aeba;
+  font-size: 9px;
+}
+
+.claim-key-preview-embed .embed-preview-image {
+  max-height: 300px;
+}
+
+.discord-button.disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
+.claim-key-emoji {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.claim-key-publish-card {
+  border-color: rgba(91, 140, 255, .13);
+}
+
+.claim-key-publish-card .save-state {
+  display: block;
+  margin: 8px 0 0;
+}
+
+.claim-key-inventory {
+  display: grid;
+  gap: 19px;
+  margin-top: 16px;
+  border-color: rgba(91, 140, 255, .13);
+}
+
+.claim-key-inventory-header p {
+  max-width: 720px;
+}
+
+.claim-key-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.claim-key-stat {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 15px 16px;
+  border: 1px solid rgba(91, 140, 255, .12);
+  border-radius: 11px;
+  background: #0c1019;
+}
+
+.claim-key-stat span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.claim-key-stat strong {
+  color: #eef3ff;
+  font-size: 25px;
+  line-height: 1.1;
+  letter-spacing: -.04em;
+}
+
+.claim-key-inventory-tools {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.claim-key-tool {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 13px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #0d1019;
+}
+
+.claim-key-tool h4,
+.claim-key-list-heading h4 {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.claim-key-tool .button {
+  justify-self: end;
+}
+
+.claim-key-list-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 3px;
+  border-top: 1px solid var(--line);
+}
+
+.claim-key-list-heading > span {
+  max-width: 500px;
+  font-size: 10px;
+  text-align: right;
+}
+
+.claim-key-list {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.claim-key-item {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(155px, .75fr) auto minmax(175px, .85fr) minmax(205px, 1fr) auto;
+  align-items: center;
+  gap: 13px;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #0b0e16;
+}
+
+.claim-key-identity,
+.claim-key-meta,
+.claim-key-claimant {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.claim-key-identity strong,
+.claim-key-claimant strong {
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.credential-secret {
+  width: max-content;
+  max-width: 100%;
+  padding: 3px 6px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .055);
+  border-radius: 6px;
+  background: #151925;
+  color: #9fa6b7;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 9px;
+  letter-spacing: .08em;
+  text-overflow: ellipsis;
+}
+
+.claim-key-meta span,
+.claim-key-claimant span {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.claim-key-status {
+  justify-self: start;
+}
+
+.claim-key-item-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.claim-key-item-actions .button {
+  min-height: 33px;
+  padding: 7px 10px;
+  font-size: 9.5px;
+}
+
+.claim-key-locked {
+  color: #747c8f;
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+@media (max-width: 1120px) {
+  .claim-key-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .claim-key-preview-panel {
+    position: static;
+  }
+
+  .claim-key-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .claim-key-meta,
+  .claim-key-claimant {
+    grid-column: 1 / -1;
+  }
+
+  .claim-key-item-actions {
+    grid-column: 2;
+    grid-row: 3 / 5;
+  }
+}
+
+@media (max-width: 760px) {
+  .claim-key-inventory-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .claim-key-list-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .claim-key-list-heading > span {
+    text-align: left;
+  }
+}
+
+@media (max-width: 540px) {
+  .claim-key-emoji,
+  .claim-key-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .claim-key-discord-preview {
+    padding: 11px;
+  }
+
+  .claim-key-preview-embed {
+    padding: 13px;
+  }
+
+  .claim-key-tool .button {
+    width: 100%;
+  }
+
+  .claim-key-item {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .claim-key-status,
+  .claim-key-meta,
+  .claim-key-claimant,
+  .claim-key-item-actions {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .claim-key-item-actions {
+    justify-content: stretch;
+  }
+
+  .claim-key-item-actions .button {
+    width: 100%;
+  }
+
+  .claim-key-locked {
+    white-space: normal;
+  }
 }
 
 /* Users */
