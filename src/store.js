@@ -215,6 +215,7 @@ export class SettingsStore {
     this.data = null;
     this.mutationData = null;
     this.writeQueue = Promise.resolve();
+    this.claimKeyOperationQueue = Promise.resolve();
   }
 
   async init() {
@@ -385,6 +386,12 @@ export class SettingsStore {
     return panels.some((panel) => panel.channelId === channelId && panel.messageId === messageId);
   }
 
+  enqueueClaimKeyOperation(operation) {
+    const result = this.claimKeyOperationQueue.then(operation, operation);
+    this.claimKeyOperationQueue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
   async updateClaimKeySettings(guildId, patch, actor) {
     const safePatch = {};
     for (const [key, value] of Object.entries(patch ?? {})) {
@@ -453,7 +460,46 @@ export class SettingsStore {
     });
   }
 
+  async resetClaimKeyClaims(guildId, actor) {
+    return this.enqueueClaimKeyOperation(() => this.mutate((data) => {
+      const section = data.guilds[guildId]?.claimKey;
+      if (!section) throw new Error('La configuración Claim Key no está disponible.');
+
+      section.enabled = false;
+      let resetCount = 0;
+      for (const credential of section.credentials) {
+        if (credential.claimedBy || credential.status === 'claimed') {
+          credential.status = 'available';
+          credential.claimedBy = null;
+          resetCount += 1;
+        }
+      }
+
+      this.addAudit(
+        actor,
+        'Claim Key',
+        `Reinicio global de reclamaciones: ${resetCount} registro(s); entregas pausadas`,
+      );
+      return { view: publicClaimKeyView(section), resetCount };
+    }));
+  }
+
   async claimCredential(guildId, discordUser) {
+    return this.enqueueClaimKeyOperation(
+      () => this.claimCredentialWithinOperation(guildId, discordUser),
+    );
+  }
+
+  async deliverClaimCredential(guildId, discordUser, deliver) {
+    if (typeof deliver !== 'function') throw new Error('La entrega de Claim Key no es válida.');
+    return this.enqueueClaimKeyOperation(async () => {
+      const result = await this.claimCredentialWithinOperation(guildId, discordUser);
+      if (result.status === 'claimed') await deliver(result);
+      return result;
+    });
+  }
+
+  async claimCredentialWithinOperation(guildId, discordUser) {
     const userId = typeof discordUser?.id === 'string' ? discordUser.id.trim() : '';
     if (!userId) throw new Error('No se pudo identificar la cuenta de Discord.');
     return this.mutate((data) => {

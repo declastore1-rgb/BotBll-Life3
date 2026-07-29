@@ -9,6 +9,10 @@ const state = {
     settings: null,
     stats: { available: 0, claimed: 0, total: 0 },
     credentials: [],
+    loaded: false,
+    actionPending: false,
+    viewRevision: 0,
+    loadGeneration: 0,
   },
   embeds: [],
   schedules: [],
@@ -647,7 +651,9 @@ function openExtraButtonDialog(button = null) {
 }
 
 function applyClaimKeyView(data) {
+  state.claimKey.viewRevision += 1;
   state.claimKey.settings = structuredClone(data.settings ?? {});
+  state.claimKey.loaded = true;
   state.claimKey.stats = {
     available: Number(data.stats?.available) || 0,
     claimed: Number(data.stats?.claimed) || 0,
@@ -656,12 +662,72 @@ function applyClaimKeyView(data) {
   state.claimKey.credentials = Array.isArray(data.credentials)
     ? data.credentials.map((credential) => structuredClone(credential))
     : [];
+  const form = $('#claim-key-form');
+  if (form?.elements.enabled) {
+    form.elements.enabled.checked = Boolean(state.claimKey.settings.enabled);
+  }
   renderClaimKeyStats();
   renderClaimKeyInventory();
+  renderClaimKeyStatus();
+  if (form) updateClaimKeyPreview();
+}
+
+function renderClaimKeyStatus() {
+  const loaded = state.claimKey.loaded;
+  const enabled = Boolean(state.claimKey.settings?.enabled);
+  const publishedPanels = Array.isArray(state.claimKey.settings?.publishedPanels)
+    ? state.claimKey.settings.publishedPanels.length
+    : 0;
+  const card = $('#claim-key-status-card');
+  card.classList.toggle('is-active', loaded && enabled);
+  card.classList.toggle('is-paused', loaded && !enabled);
+  $('#claim-key-status-dot').className = loaded ? (enabled ? 'is-active' : 'is-paused') : '';
+  $('#claim-key-status-label').textContent = loaded
+    ? (enabled ? 'Reclamaciones activas' : 'Reclamaciones pausadas')
+    : 'Actualizando estado';
+  $('#claim-key-status-copy').textContent = loaded
+    ? enabled
+      ? `“Obtener clave” está habilitado en ${publishedPanels} panel(es) registrado(s).`
+      : 'Los paneles siguen visibles, pero “Obtener clave” permanece deshabilitado hasta que reactives las entregas.'
+    : 'Esperando la configuración vigente del servidor.';
+
+  const controlsLocked = !loaded || state.claimKey.actionPending;
+  const toggleButton = $('#claim-key-toggle-button');
+  toggleButton.className = `button ${loaded ? (enabled ? 'danger' : 'primary') : 'ghost'}`;
+  toggleButton.textContent = loaded
+    ? (enabled ? 'Pausar reclamaciones' : 'Reactivar reclamaciones')
+    : 'Cargando...';
+  toggleButton.setAttribute('aria-label', toggleButton.textContent);
+  toggleButton.disabled = controlsLocked;
+
+  const publishButton = $('#claim-key-publish-button');
+  const canPublish = !controlsLocked && enabled && state.claimKey.stats.available > 0;
+  publishButton.disabled = !canPublish;
+  publishButton.title = canPublish
+    ? ''
+    : controlsLocked
+      ? 'Espera a que termine la operación actual.'
+      : enabled
+        ? 'Añade al menos una credencial disponible para publicar.'
+        : 'Reactiva las reclamaciones antes de publicar.';
+
+  const saveButton = $('#claim-key-form [type="submit"]');
+  if (saveButton) saveButton.disabled = controlsLocked;
+  $$('#claim-key-form input, #claim-key-form textarea, #claim-key-form select, #claim-key-form button, #claim-key-single-form input, #claim-key-single-form button, #claim-key-bulk-form textarea, #claim-key-bulk-form button, #claim-key-list button')
+    .forEach((control) => { control.disabled = controlsLocked; });
 }
 
 async function loadClaimKey() {
+  const loadGeneration = ++state.claimKey.loadGeneration;
+  const revisionAtStart = state.claimKey.viewRevision;
+  state.claimKey.loaded = false;
+  renderClaimKeyStats();
+  renderClaimKeyStatus();
   const [data, resources] = await Promise.all([api('/api/claim-key'), getResources()]);
+  if (
+    state.claimKey.loadGeneration !== loadGeneration
+    || state.claimKey.viewRevision !== revisionAtStart
+  ) return;
   applyClaimKeyView(data);
   const form = $('#claim-key-form');
   fillForm(form, data.settings);
@@ -716,9 +782,27 @@ function renderClaimKeyStats() {
   $('#claim-key-available').textContent = available.toLocaleString('es-ES');
   $('#claim-key-claimed').textContent = claimed.toLocaleString('es-ES');
   $('#claim-key-total').textContent = total.toLocaleString('es-ES');
+  const enabled = Boolean(state.claimKey.settings?.enabled);
   const badge = $('#claim-key-stock-badge');
-  badge.textContent = `${available.toLocaleString('es-ES')} disponible${available === 1 ? '' : 's'}`;
-  badge.className = `badge ${available > 0 ? 'success' : total > 0 ? 'danger' : 'neutral'}`;
+  if (!state.claimKey.loaded) {
+    badge.textContent = 'Cargando estado';
+    badge.className = 'badge neutral';
+  } else if (!enabled) {
+    badge.textContent = 'Entregas pausadas';
+    badge.className = 'badge warning';
+  } else {
+    badge.textContent = `${available.toLocaleString('es-ES')} disponible${available === 1 ? '' : 's'}`;
+    badge.className = `badge ${available > 0 ? 'success' : total > 0 ? 'danger' : 'neutral'}`;
+  }
+
+  const resetButton = $('#claim-key-reset-button');
+  const resetLocked = !state.claimKey.loaded || state.claimKey.actionPending;
+  resetButton.disabled = resetLocked || claimed < 1;
+  resetButton.title = resetLocked
+    ? 'Espera a que termine la carga u operación actual.'
+    : claimed > 0
+      ? `Reiniciar ${claimed.toLocaleString('es-ES')} reclamación(es).`
+      : 'No hay reclamaciones para reiniciar.';
 }
 
 function formatClaimKeyDate(value) {
@@ -869,15 +953,155 @@ async function addClaimKeyCredentials(credentials) {
 
 async function deleteClaimKeyCredential(credential, button) {
   if (!confirm(`¿Eliminar la credencial disponible “${credential.username}”? Esta acción no se puede deshacer.`)) return;
-  await performButtonAction(button, 'Eliminando...', async () => {
+  if (!beginClaimKeyAction(button, 'Eliminando...')) return;
+  try {
     const data = await api(`/api/claim-key/credentials/${encodeURIComponent(credential.id)}`, { method: 'DELETE' });
     applyClaimKeyView(data);
     toast('Credencial eliminada del inventario.');
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    endClaimKeyAction(button);
+  }
+}
+
+function beginClaimKeyAction(button, label) {
+  if (!state.claimKey.loaded || state.claimKey.actionPending) return false;
+  state.claimKey.actionPending = true;
+  renderClaimKeyStats();
+  renderClaimKeyStatus();
+  setButtonBusy(button, true, label);
+  return true;
+}
+
+function endClaimKeyAction(button) {
+  setButtonBusy(button, false);
+  state.claimKey.actionPending = false;
+  renderClaimKeyStats();
+  renderClaimKeyStatus();
+}
+
+function claimKeySyncSummary(data, baseText) {
+  const updated = Number(data.panelsUpdated) || 0;
+  const failed = Number(data.panelsFailed) || 0;
+  const pruned = Number(data.panelsPruned) || 0;
+  const details = [];
+  if (updated) details.push(`${updated} sincronizado(s)`);
+  if (failed) details.push(`${failed} sin sincronizar`);
+  if (pruned) details.push(`${pruned} registro(s) obsoleto(s) eliminado(s)`);
+  return {
+    failed,
+    text: details.length ? `${baseText} · ${details.join(' · ')}` : baseText,
+  };
+}
+
+async function toggleClaimKeyAvailability() {
+  const button = $('#claim-key-toggle-button');
+  const requestedEnabled = !Boolean(state.claimKey.settings?.enabled);
+  if (!beginClaimKeyAction(button, requestedEnabled ? 'Reactivando...' : 'Pausando...')) return;
+  $('#claim-key-toggle-state').textContent = '';
+  try {
+    const data = await api('/api/claim-key', { method: 'PATCH', body: { enabled: requestedEnabled } });
+    applyClaimKeyView(data);
+    const enabled = Boolean(data.settings?.enabled);
+    const statusText = enabled ? 'Reclamaciones reactivadas' : 'Reclamaciones pausadas';
+    const sync = claimKeySyncSummary(data, statusText);
+    $('#claim-key-toggle-state').textContent = sync.text;
+    $('#claim-key-save-state').textContent = statusText;
+    if (sync.failed) {
+      toast(
+        `${statusText} en el backend, pero ${sync.failed} panel(es) no pudieron actualizarse. Se bloquearán al intentar reclamar.`,
+        'error',
+      );
+    } else {
+      toast(enabled
+        ? '“Obtener clave” vuelve a estar disponible.'
+        : '“Obtener clave” fue deshabilitado en los paneles registrados.');
+    }
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    endClaimKeyAction(button);
+  }
+}
+
+async function resetClaimKeyClaims() {
+  const claimed = state.claimKey.stats.claimed;
+  if (claimed < 1) return;
+  const confirmed = confirm(
+    `Vas a reiniciar ${claimed.toLocaleString('es-ES')} reclamación(es). `
+      + 'Se borrará la asignación a cada Discord, las credenciales volverán a estar disponibles '
+      + 'y “Obtener clave” quedará pausado. El reset no cambia las contraseñas externas; '
+      + 'quienes ya las recibieron pueden conservarlas. ¿Deseas continuar?',
+  );
+  if (!confirmed) return;
+
+  const button = $('#claim-key-reset-button');
+  if (!beginClaimKeyAction(button, 'Reiniciando...')) return;
+  $('#claim-key-reset-state').textContent = '';
+  try {
+    const data = await api('/api/claim-key/claims/reset', { method: 'POST' });
+    applyClaimKeyView(data);
+    const resetCount = Number(data.resetCount) || 0;
+    const baseText = `${resetCount.toLocaleString('es-ES')} reclamación(es) reiniciada(s). Claim Key quedó pausado.`;
+    const sync = claimKeySyncSummary(data, baseText);
+    $('#claim-key-reset-state').textContent = sync.text;
+    $('#claim-key-toggle-state').textContent = sync.failed
+      ? `Pausa aplicada en backend · ${sync.failed} panel(es) pendientes`
+      : 'Reclamaciones pausadas tras el reinicio';
+    $('#claim-key-save-state').textContent = 'Reclamaciones pausadas tras el reinicio';
+    updateClaimKeyPreview();
+    if (sync.failed) {
+      toast(
+        `Se reiniciaron ${resetCount.toLocaleString('es-ES')} reclamación(es), pero ${sync.failed} panel(es) no pudieron actualizarse. El backend permanece pausado.`,
+        'error',
+      );
+    } else {
+      toast(`Se reiniciaron ${resetCount.toLocaleString('es-ES')} reclamación(es) y se pausaron las entregas.`);
+    }
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    endClaimKeyAction(button);
+  }
+}
+
+function switchClaimKeyView(name) {
+  const selected = name === 'inventory' ? 'inventory' : 'panel';
+  $$('[data-claim-key-view]').forEach((tab) => {
+    const active = tab.dataset.claimKeyView === selected;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
+  });
+  $$('.claim-key-subpage').forEach((view) => {
+    const active = view.id === `claim-key-view-${selected}`;
+    view.classList.toggle('active', active);
+    view.hidden = !active;
   });
 }
 
+function handleClaimKeyTabKeydown(event) {
+  const tabs = $$('[data-claim-key-view]');
+  const currentIndex = tabs.indexOf(event.currentTarget);
+  let nextIndex = currentIndex;
+  if (event.key === 'Home') nextIndex = 0;
+  else if (event.key === 'End') nextIndex = tabs.length - 1;
+  else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+    nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+  } else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+    nextIndex = (currentIndex + 1) % tabs.length;
+  } else {
+    return;
+  }
+  event.preventDefault();
+  const nextTab = tabs[nextIndex];
+  switchClaimKeyView(nextTab.dataset.claimKeyView);
+  nextTab.focus();
+}
+
 function switchEmbedView(name) {
-  $$('.subpage-tab').forEach((tab) => {
+  $$('[data-embed-view]').forEach((tab) => {
     const active = tab.dataset.embedView === name;
     tab.classList.toggle('active', active);
     tab.setAttribute('aria-selected', String(active));
@@ -1355,6 +1579,13 @@ $('#publish-button').addEventListener('click', async () => {
   finally { setButtonBusy(button, false); }
 });
 
+$$('[data-claim-key-view]').forEach((tab) => {
+  tab.addEventListener('click', () => switchClaimKeyView(tab.dataset.claimKeyView));
+  tab.addEventListener('keydown', handleClaimKeyTabKeydown);
+});
+$('#claim-key-toggle-button').addEventListener('click', toggleClaimKeyAvailability);
+$('#claim-key-reset-button').addEventListener('click', resetClaimKeyClaims);
+
 const claimKeyUnicodeInput = $('#claim-key-form [data-emoji-unicode]');
 claimKeyUnicodeInput.addEventListener('input', () => {
   const field = emojiField('claimKeyButtonEmoji');
@@ -1371,7 +1602,7 @@ $('#claim-key-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const button = form.querySelector('[type="submit"]');
-  setButtonBusy(button, true, 'Guardando...');
+  if (!beginClaimKeyAction(button, 'Guardando...')) return;
   try {
     const data = await api('/api/claim-key', { method: 'PATCH', body: claimKeyPayload() });
     applyClaimKeyView(data);
@@ -1379,22 +1610,28 @@ $('#claim-key-form').addEventListener('submit', async (event) => {
     syncTicketButtonStylePicker(form.elements.buttonStyle);
     setEmojiField('claimKeyButtonEmoji', data.settings.buttonEmoji);
     updateClaimKeyPreview();
-    const updated = Number(data.panelsUpdated) || 0;
-    $('#claim-key-save-state').textContent = updated
-      ? `${updated} panel(es) sincronizado(s)`
-      : 'Configuración guardada';
-    toast(updated
-      ? `Claim Key guardado y ${updated} panel(es) actualizado(s).`
-      : 'Configuración Claim Key guardada.');
-  } catch (error) { toast(error.message, 'error'); }
-  finally { setButtonBusy(button, false); }
+    const sync = claimKeySyncSummary(data, 'Configuración guardada');
+    $('#claim-key-save-state').textContent = sync.text;
+    if (sync.failed) {
+      toast(
+        `Configuración guardada, pero ${sync.failed} panel(es) no pudieron sincronizarse. El backend usa el estado nuevo.`,
+        'error',
+      );
+    } else {
+      toast('Configuración Claim Key guardada.');
+    }
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    endClaimKeyAction(button);
+  }
 });
 
 $('#claim-key-single-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const button = form.querySelector('[type="submit"]');
-  setButtonBusy(button, true, 'Cifrando...');
+  if (!beginClaimKeyAction(button, 'Cifrando...')) return;
   try {
     await addClaimKeyCredentials([{
       username: form.elements.username.value.trim(),
@@ -1405,38 +1642,51 @@ $('#claim-key-single-form').addEventListener('submit', async (event) => {
   } catch (error) {
     form.elements.password.value = '';
     toast(error.message, 'error');
-  } finally { setButtonBusy(button, false); }
+  } finally {
+    endClaimKeyAction(button);
+  }
 });
 
 $('#claim-key-bulk-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const button = form.querySelector('[type="submit"]');
-  setButtonBusy(button, true, 'Importando...');
+  if (!beginClaimKeyAction(button, 'Importando...')) return;
   try {
     const credentials = parseBulkClaimCredentials(form.elements.credentials.value);
     await addClaimKeyCredentials(credentials);
     form.elements.credentials.value = '';
     toast(`${credentials.length} credencial(es) cifrada(s) e importada(s).`);
-  } catch (error) { toast(error.message, 'error'); }
-  finally { setButtonBusy(button, false); }
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    endClaimKeyAction(button);
+  }
 });
 
 $('#claim-key-publish-button').addEventListener('click', async () => {
   const button = $('#claim-key-publish-button');
   const channelId = $('#claim-key-publish-channel').value;
   if (!channelId) return toast('Selecciona un canal para publicar Claim Key.', 'error');
-  setButtonBusy(button, true, 'Publicando...');
+  if (!beginClaimKeyAction(button, 'Publicando...')) return;
   try {
-    await api('/api/claim-key/publish', { method: 'POST', body: { channelId } });
-    $('#claim-key-publish-state').textContent = 'Panel publicado y guardado para sincronización.';
-    toast('Panel Claim Key publicado correctamente.');
+    const result = await api('/api/claim-key/publish', { method: 'POST', body: { channelId } });
+    const sync = claimKeySyncSummary(result, 'Panel publicado y guardado para sincronización');
+    $('#claim-key-publish-state').textContent = sync.text;
+    if (sync.failed) {
+      toast(`Panel publicado, pero ${sync.failed} publicación(es) anterior(es) no pudieron sincronizarse.`, 'error');
+    } else {
+      toast('Panel Claim Key publicado correctamente.');
+    }
     await loadClaimKey();
-  } catch (error) { toast(error.message, 'error'); }
-  finally { setButtonBusy(button, false); }
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    endClaimKeyAction(button);
+  }
 });
 
-$$('.subpage-tab').forEach((tab) => tab.addEventListener('click', () => switchEmbedView(tab.dataset.embedView)));
+$$('[data-embed-view]').forEach((tab) => tab.addEventListener('click', () => switchEmbedView(tab.dataset.embedView)));
 $('#embed-form').addEventListener('input', updateEmbedPreview);
 $('#embed-form-reset').addEventListener('click', resetEmbedForm);
 $('#embed-form').addEventListener('submit', async (event) => {

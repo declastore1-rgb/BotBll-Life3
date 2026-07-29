@@ -86,11 +86,24 @@ export async function handleClaimKeyClaim(interaction, store) {
     });
     return;
   }
-  const result = await store.claimCredential(interaction.guildId, {
+  const result = await store.deliverClaimCredential(interaction.guildId, {
     id: interaction.user.id,
     username: interaction.user.username,
     globalName: interaction.user.globalName ?? '',
     tag: interaction.user.tag,
+  }, async (claimed) => {
+    const embed = new EmbedBuilder()
+      .setColor(0x57f287)
+      .setTitle('Acceso entregado correctamente')
+      .setDescription('Estas credenciales son privadas. Guárdalas ahora y no las compartas con otras personas.')
+      .addFields(
+        { name: 'Usuario', value: `\`\`\`\n${safeCodeBlock(claimed.username)}\n\`\`\`` },
+        { name: 'Contraseña', value: `\`\`\`\n${safeCodeBlock(claimed.password)}\n\`\`\`` },
+      )
+      .setFooter({ text: 'BLL$LIFE Access · Una entrega por cuenta de Discord' })
+      .setTimestamp(new Date(claimed.claimedAt));
+
+    await interaction.editReply({ embeds: [embed], allowedMentions: { parse: [] } });
   });
 
   if (result.status === 'disabled') {
@@ -112,27 +125,15 @@ export async function handleClaimKeyClaim(interaction, store) {
       content: 'No quedan accesos disponibles en este momento. Inténtalo nuevamente más tarde.',
       allowedMentions: { parse: [] },
     });
-    return;
   }
-
-  const embed = new EmbedBuilder()
-    .setColor(0x57f287)
-    .setTitle('Acceso entregado correctamente')
-    .setDescription('Estas credenciales son privadas. Guárdalas ahora y no las compartas con otras personas.')
-    .addFields(
-      { name: 'Usuario', value: `\`\`\`\n${safeCodeBlock(result.username)}\n\`\`\`` },
-      { name: 'Contraseña', value: `\`\`\`\n${safeCodeBlock(result.password)}\n\`\`\`` },
-    )
-    .setFooter({ text: 'BLL$LIFE Access · Una entrega por cuenta de Discord' })
-    .setTimestamp(new Date(result.claimedAt));
-
-  await interaction.editReply({ embeds: [embed], allowedMentions: { parse: [] } });
 }
 
 export async function syncClaimKeyPublishedPanels(guild, settings) {
+  const panels = settings.publishedPanels ?? [];
   const active = [];
   let updated = 0;
-  for (const panel of settings.publishedPanels ?? []) {
+  let failed = 0;
+  for (const panel of panels) {
     try {
       const channel = guild.channels.cache.get(panel.channelId)
         ?? await guild.channels.fetch(panel.channelId);
@@ -144,9 +145,16 @@ export async function syncClaimKeyPublishedPanels(guild, settings) {
     } catch (error) {
       if (![10003, 10008].includes(error.code)) {
         active.push(panel);
+        failed += 1;
         console.error(`No se pudo actualizar el panel Claim Key ${panel.messageId}:`, error);
       }
     }
   }
-  return { active, updated };
+  return {
+    active,
+    updated,
+    failed,
+    total: panels.length,
+    pruned: panels.length - active.length,
+  };
 }

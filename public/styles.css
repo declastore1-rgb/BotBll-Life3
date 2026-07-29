@@ -1365,6 +1365,139 @@ textarea:disabled {
 }
 
 /* Claim Key */
+.badge.warning {
+  border: 1px solid rgba(255, 190, 92, .2);
+  background: rgba(255, 190, 92, .09);
+  color: #ffc878;
+}
+
+.claim-key-tabs {
+  width: min(100%, 470px);
+  margin-bottom: 16px;
+  border-color: rgba(155, 124, 255, .13);
+  background: linear-gradient(145deg, rgba(19, 22, 34, .92), rgba(11, 13, 21, .86));
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .12);
+}
+
+.claim-key-tabs .subpage-tab {
+  min-width: 160px;
+}
+
+.claim-key-subpage {
+  display: none;
+}
+
+.claim-key-subpage.active {
+  display: block;
+  animation: fade .2s var(--ease) both;
+}
+
+.claim-key-status-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  margin-bottom: 16px;
+  overflow: hidden;
+  border-color: rgba(255, 255, 255, .08);
+  background: linear-gradient(145deg, rgba(18, 22, 34, .98), rgba(11, 14, 23, .96));
+}
+
+.claim-key-status-card::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: #6f788c;
+  content: "";
+}
+
+.claim-key-status-card.is-active {
+  border-color: rgba(80, 227, 164, .17);
+  box-shadow: inset 0 1px rgba(255, 255, 255, .025), 0 12px 34px rgba(0, 0, 0, .14);
+}
+
+.claim-key-status-card.is-active::before {
+  background: var(--success);
+  box-shadow: 0 0 18px rgba(80, 227, 164, .35);
+}
+
+.claim-key-status-card.is-paused {
+  border-color: rgba(255, 190, 92, .18);
+}
+
+.claim-key-status-card.is-paused::before {
+  background: #ffbd65;
+  box-shadow: 0 0 18px rgba(255, 189, 101, .28);
+}
+
+.claim-key-status-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.claim-key-status-symbol {
+  width: 43px;
+  height: 43px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, .035);
+}
+
+#claim-key-status-dot {
+  width: 11px;
+  height: 11px;
+  border: 2px solid rgba(255, 255, 255, .2);
+  border-radius: 50%;
+  background: #70798c;
+}
+
+#claim-key-status-dot.is-active {
+  border-color: rgba(80, 227, 164, .24);
+  background: var(--success);
+  box-shadow: 0 0 0 5px rgba(80, 227, 164, .09), 0 0 16px rgba(80, 227, 164, .32);
+}
+
+#claim-key-status-dot.is-paused {
+  border-color: rgba(255, 190, 92, .24);
+  background: #ffbd65;
+  box-shadow: 0 0 0 5px rgba(255, 190, 92, .08), 0 0 16px rgba(255, 190, 92, .24);
+}
+
+.claim-key-status-main h4 {
+  margin: 4px 0 0;
+  font-size: 14px;
+}
+
+.claim-key-status-main p {
+  max-width: 700px;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.claim-key-status-actions {
+  min-width: min(100%, 230px);
+  display: grid;
+  justify-items: end;
+  gap: 7px;
+}
+
+.claim-key-status-actions .save-state {
+  max-width: 280px;
+  text-align: right;
+}
+
+.claim-key-status-actions .button {
+  min-width: 200px;
+}
+
 .claim-key-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.12fr) minmax(340px, .88fr);
@@ -1374,6 +1507,13 @@ textarea:disabled {
 
 .claim-key-editor {
   min-width: 0;
+  border-color: rgba(155, 124, 255, .13);
+  background: linear-gradient(150deg, rgba(17, 20, 31, .98), rgba(11, 13, 22, .96));
+}
+
+.claim-key-editor .setting-row.featured {
+  border-color: rgba(155, 124, 255, .13);
+  background: linear-gradient(135deg, rgba(155, 124, 255, .075), rgba(91, 140, 255, .035));
 }
 
 .claim-key-preview-panel {
@@ -1469,8 +1609,10 @@ textarea:disabled {
 .claim-key-inventory {
   display: grid;
   gap: 19px;
-  margin-top: 16px;
+  margin-top: 0;
   border-color: rgba(91, 140, 255, .13);
+  background: linear-gradient(150deg, rgba(17, 20, 31, .98), rgba(10, 13, 21, .97));
+  box-shadow: var(--shadow-sm);
 }
 
 .claim-key-inventory-header p {
@@ -1487,10 +1629,11 @@ textarea:disabled {
   min-width: 0;
   display: grid;
   gap: 5px;
-  padding: 15px 16px;
-  border: 1px solid rgba(91, 140, 255, .12);
-  border-radius: 11px;
-  background: #0c1019;
+  padding: 16px;
+  border: 1px solid rgba(91, 140, 255, .13);
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgba(18, 23, 36, .96), rgba(11, 15, 24, .96));
+  box-shadow: inset 0 1px rgba(255, 255, 255, .025), 0 9px 22px rgba(0, 0, 0, .1);
 }
 
 .claim-key-stat span {
@@ -1533,6 +1676,51 @@ textarea:disabled {
 
 .claim-key-tool .button {
   justify-self: end;
+}
+
+.claim-key-danger-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 17px 18px;
+  border: 1px solid rgba(255, 100, 124, .2);
+  border-radius: 13px;
+  background: linear-gradient(135deg, rgba(255, 100, 124, .075), rgba(39, 15, 24, .2));
+  box-shadow: inset 0 1px rgba(255, 255, 255, .02);
+}
+
+.claim-key-danger-zone > div {
+  min-width: 0;
+}
+
+.claim-key-danger-zone .eyebrow {
+  color: #ff8fa3;
+}
+
+.claim-key-danger-zone h4 {
+  margin: 5px 0 0;
+  color: #ffd8df;
+  font-size: 13px;
+}
+
+.claim-key-danger-zone p {
+  max-width: 780px;
+  margin: 6px 0 0;
+  color: #a99199;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.claim-key-danger-zone .save-state {
+  display: block;
+  margin-top: 8px;
+  color: #d8aab3;
+}
+
+.claim-key-danger-zone .button {
+  min-width: 190px;
+  flex: 0 0 auto;
 }
 
 .claim-key-list-heading {
@@ -1655,6 +1843,30 @@ textarea:disabled {
 }
 
 @media (max-width: 760px) {
+  .claim-key-status-card,
+  .claim-key-danger-zone {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .claim-key-status-actions {
+    width: 100%;
+    min-width: 0;
+    justify-items: stretch;
+  }
+
+  .claim-key-status-actions .save-state {
+    max-width: none;
+    text-align: left;
+  }
+
+  .claim-key-status-actions .button,
+  .claim-key-danger-zone .button {
+    width: 100%;
+    min-width: 0;
+  }
+
   .claim-key-inventory-tools {
     grid-template-columns: 1fr;
   }
@@ -1670,6 +1882,15 @@ textarea:disabled {
 }
 
 @media (max-width: 540px) {
+  .claim-key-tabs .subpage-tab {
+    min-width: 0;
+    flex: 1 0 auto;
+  }
+
+  .claim-key-status-main {
+    align-items: flex-start;
+  }
+
   .claim-key-emoji,
   .claim-key-stats {
     grid-template-columns: 1fr;

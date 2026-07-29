@@ -24,7 +24,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, '..', 'public');
-const DASHBOARD_VERSION = 'claim-key-20260729-1';
+const DASHBOARD_VERSION = 'claim-key-20260729-3';
 const loginAttempts = new Map();
 const SNOWFLAKE = /^\d{17,20}$/;
 const HEX_COLOR = /^#[0-9A-F]{6}$/i;
@@ -482,6 +482,40 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
   }));
   app.use(express.json({ limit: '64kb' }));
 
+  let claimKeyControlQueue = Promise.resolve();
+  const runClaimKeyControlOperation = (operation) => {
+    const result = claimKeyControlQueue.then(operation, operation);
+    claimKeyControlQueue = result.then(() => undefined, () => undefined);
+    return result;
+  };
+  const syncCurrentClaimKeyPanels = async () => {
+    let view = store.getClaimKeyAdminView(config.guildId);
+    const panels = view.settings.publishedPanels ?? [];
+    const guild = client.guilds.cache.get(config.guildId);
+    if (!guild) {
+      return {
+        view,
+        panelsUpdated: 0,
+        panelsFailed: panels.length,
+        panelsTotal: panels.length,
+        panelsPruned: 0,
+      };
+    }
+
+    const panelSync = await syncClaimKeyPublishedPanels(guild, view.settings);
+    if (panelSync.active.length !== panels.length) {
+      await store.replaceClaimKeyPublishedPanels(config.guildId, panelSync.active);
+      view = store.getClaimKeyAdminView(config.guildId);
+    }
+    return {
+      view,
+      panelsUpdated: panelSync.updated,
+      panelsFailed: panelSync.failed,
+      panelsTotal: panelSync.total,
+      panelsPruned: panelSync.pruned,
+    };
+  };
+
   app.get('/health', (_request, response) => {
     response.status(client.isReady() ? 200 : 503).json({
       ok: client.isReady(),
@@ -787,24 +821,24 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
 
   app.patch('/api/claim-key', requirePermission('claimkey'), async (request, response, next) => {
     try {
-      const current = store.getClaimKeyAdminView(config.guildId).settings;
-      const guild = client.guilds.cache.get(config.guildId);
-      const patch = sanitizeClaimKey(request.body ?? {}, current, guild);
-      let view = await store.updateClaimKeySettings(
-        config.guildId,
-        patch,
-        request.dashboardAuth.user,
-      );
-      let panelsUpdated = 0;
-      if (guild) {
-        const panelSync = await syncClaimKeyPublishedPanels(guild, view.settings);
-        panelsUpdated = panelSync.updated;
-        if (panelSync.active.length !== (view.settings.publishedPanels ?? []).length) {
-          await store.replaceClaimKeyPublishedPanels(config.guildId, panelSync.active);
-          view = store.getClaimKeyAdminView(config.guildId);
-        }
-      }
-      response.json({ ...view, panelsUpdated });
+      const result = await runClaimKeyControlOperation(async () => {
+        const current = store.getClaimKeyAdminView(config.guildId).settings;
+        const guild = client.guilds.cache.get(config.guildId);
+        const patch = sanitizeClaimKey(request.body ?? {}, current, guild);
+        await store.updateClaimKeySettings(
+          config.guildId,
+          patch,
+          request.dashboardAuth.user,
+        );
+        return syncCurrentClaimKeyPanels();
+      });
+      response.json({
+        ...result.view,
+        panelsUpdated: result.panelsUpdated,
+        panelsFailed: result.panelsFailed,
+        panelsTotal: result.panelsTotal,
+        panelsPruned: result.panelsPruned,
+      });
     } catch (error) {
       next(error);
     }
@@ -837,39 +871,67 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
     }
   });
 
+  app.post('/api/claim-key/claims/reset', requirePermission('claimkey'), async (request, response, next) => {
+    try {
+      const result = await runClaimKeyControlOperation(async () => {
+        const reset = await store.resetClaimKeyClaims(
+          config.guildId,
+          request.dashboardAuth.user,
+        );
+        const sync = await syncCurrentClaimKeyPanels();
+        return { ...sync, resetCount: reset.resetCount };
+      });
+      response.json({
+        ...result.view,
+        resetCount: result.resetCount,
+        panelsUpdated: result.panelsUpdated,
+        panelsFailed: result.panelsFailed,
+        panelsTotal: result.panelsTotal,
+        panelsPruned: result.panelsPruned,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post('/api/claim-key/publish', requirePermission('claimkey'), async (request, response, next) => {
     try {
       const channelId = cleanSnowflake(request.body?.channelId, 'Canal', true);
-      const guild = client.guilds.cache.get(config.guildId);
-      if (!guild) throw new Error('Discord todavía no está conectado.');
-      const channel = guild.channels.cache.get(channelId);
-      if (!channel?.isTextBased() || channel.isThread()) {
-        throw new Error('Selecciona un canal de texto que no sea un hilo.');
-      }
-      let view = store.getClaimKeyAdminView(config.guildId);
-      if (!view.settings.enabled) throw new Error('Activa Claim Key antes de publicar el panel.');
-      if (view.stats.available < 1) throw new Error('Añade al menos una credencial disponible antes de publicar.');
-      const panelSync = await syncClaimKeyPublishedPanels(guild, view.settings);
-      if (panelSync.active.length !== (view.settings.publishedPanels ?? []).length) {
-        await store.replaceClaimKeyPublishedPanels(config.guildId, panelSync.active);
-        view = store.getClaimKeyAdminView(config.guildId);
-      }
-      if ((view.settings.publishedPanels ?? []).length >= 25) {
-        throw new Error('Has alcanzado el límite de 25 paneles activos. Elimina uno en Discord antes de publicar otro.');
-      }
-      const message = await channel.send(buildClaimKeyPanel(view.settings));
-      try {
-        await store.recordClaimKeyPublishedPanel(
-          config.guildId,
-          channel.id,
-          message.id,
-          request.dashboardAuth.user,
-        );
-      } catch (error) {
-        await message.delete().catch(() => null);
-        throw error;
-      }
-      response.status(201).json({ ok: true, messageId: message.id });
+      const result = await runClaimKeyControlOperation(async () => {
+        const guild = client.guilds.cache.get(config.guildId);
+        if (!guild) throw new Error('Discord todavía no está conectado.');
+        const channel = guild.channels.cache.get(channelId);
+        if (!channel?.isTextBased() || channel.isThread()) {
+          throw new Error('Selecciona un canal de texto que no sea un hilo.');
+        }
+        const sync = await syncCurrentClaimKeyPanels();
+        const view = sync.view;
+        if (!view.settings.enabled) throw new Error('Activa Claim Key antes de publicar el panel.');
+        if (view.stats.available < 1) throw new Error('Añade al menos una credencial disponible antes de publicar.');
+        if ((view.settings.publishedPanels ?? []).length >= 25) {
+          throw new Error('Has alcanzado el límite de 25 paneles activos. Elimina uno en Discord antes de publicar otro.');
+        }
+        const message = await channel.send(buildClaimKeyPanel(view.settings));
+        try {
+          await store.recordClaimKeyPublishedPanel(
+            config.guildId,
+            channel.id,
+            message.id,
+            request.dashboardAuth.user,
+          );
+        } catch (error) {
+          await message.delete().catch(() => null);
+          throw error;
+        }
+        return { ...sync, messageId: message.id };
+      });
+      response.status(201).json({
+        ok: true,
+        messageId: result.messageId,
+        panelsUpdated: result.panelsUpdated,
+        panelsFailed: result.panelsFailed,
+        panelsPruned: result.panelsPruned,
+      });
     } catch (error) {
       next(error);
     }
