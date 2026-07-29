@@ -669,7 +669,7 @@ function applyClaimKeyView(data) {
   renderClaimKeyStats();
   renderClaimKeyInventory();
   renderClaimKeyStatus();
-  if (form) updateClaimKeyPreview();
+  updateAllClaimKeyPreviews();
 }
 
 function renderClaimKeyStatus() {
@@ -711,13 +711,29 @@ function renderClaimKeyStatus() {
         ? 'Añade al menos una credencial disponible para publicar.'
         : 'Reactiva las reclamaciones antes de publicar.';
 
-  const saveButton = $('#claim-key-form [type="submit"]');
-  if (saveButton) saveButton.disabled = controlsLocked;
-  $$('#claim-key-form input, #claim-key-form textarea, #claim-key-form select, #claim-key-form button, #claim-key-single-form input, #claim-key-single-form button, #claim-key-bulk-form textarea, #claim-key-bulk-form button, #claim-key-list button')
-    .forEach((control) => { control.disabled = controlsLocked; });
+  $$([
+    '#claim-key-form input',
+    '#claim-key-form textarea',
+    '#claim-key-form select',
+    '#claim-key-form button',
+    '#claim-key-delivery-form input',
+    '#claim-key-delivery-form textarea',
+    '#claim-key-delivery-form select',
+    '#claim-key-delivery-form button',
+    '#claim-key-confirmation-form input',
+    '#claim-key-confirmation-form textarea',
+    '#claim-key-confirmation-form select',
+    '#claim-key-confirmation-form button',
+    '#claim-key-single-form input',
+    '#claim-key-single-form button',
+    '#claim-key-bulk-form textarea',
+    '#claim-key-bulk-form button',
+    '#claim-key-list button',
+  ].join(', ')).forEach((control) => { control.disabled = controlsLocked; });
 }
 
 async function loadClaimKey() {
+  initializeClaimKeyMessageEditors();
   const loadGeneration = ++state.claimKey.loadGeneration;
   const revisionAtStart = state.claimKey.viewRevision;
   state.claimKey.loaded = false;
@@ -731,12 +747,14 @@ async function loadClaimKey() {
   applyClaimKeyView(data);
   const form = $('#claim-key-form');
   fillForm(form, data.settings);
+  fillForm($('#claim-key-delivery-form'), data.settings);
+  fillForm($('#claim-key-confirmation-form'), data.settings);
   ensureTicketButtonStylePicker(form.elements.buttonStyle);
   syncTicketButtonStylePicker(form.elements.buttonStyle);
   populateSelect($('#claim-key-publish-channel'), resources.channels, '', '#');
   populateEmojiSelectors(resources);
   setEmojiField('claimKeyButtonEmoji', data.settings.buttonEmoji);
-  updateClaimKeyPreview();
+  updateAllClaimKeyPreviews();
 }
 
 function claimKeyPayload() {
@@ -744,6 +762,230 @@ function claimKeyPayload() {
   const body = formObject(form);
   body.buttonEmoji = readEmojiField('claimKeyButtonEmoji');
   return body;
+}
+
+function claimKeyDeliveryPayload() {
+  return formObject($('#claim-key-delivery-form'));
+}
+
+function claimKeyConfirmationPayload() {
+  return formObject($('#claim-key-confirmation-form'));
+}
+
+function safeHttpsPreviewUrl(value) {
+  try {
+    const url = new URL(String(value).trim());
+    if (
+      url.protocol !== 'https:'
+      || url.username
+      || url.password
+      || url.toString().length > 2_048
+    ) return '';
+    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (host === 'localhost' || host === '::1' || host.endsWith('.local') || host.includes(':')) return '';
+    const parts = host.split('.').map(Number);
+    const isIpv4 = parts.length === 4
+      && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255);
+    const isPrivateIpv4 = isIpv4 && (
+      parts[0] === 10
+      || parts[0] === 127
+      || parts[0] === 0
+      || (parts[0] === 169 && parts[1] === 254)
+      || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
+      || (parts[0] === 192 && parts[1] === 168)
+    );
+    return isPrivateIpv4 ? '' : url.href;
+  } catch {
+    return '';
+  }
+}
+
+function appendDiscordMarkdownLine(fragment, line) {
+  const pattern = /(\*\*([^*\r\n]+)\*\*|\[([^\]\r\n]+)\]\((https:\/\/[^\s)]+)\))/giu;
+  let cursor = 0;
+  let match;
+  while ((match = pattern.exec(line)) !== null) {
+    if (match.index > cursor) fragment.append(document.createTextNode(line.slice(cursor, match.index)));
+    if (match[2]) {
+      const strong = document.createElement('strong');
+      strong.textContent = match[2];
+      fragment.append(strong);
+    } else {
+      const href = safeHttpsPreviewUrl(match[4]);
+      if (href) {
+        const link = document.createElement('a');
+        link.href = href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer nofollow';
+        link.textContent = match[3];
+        fragment.append(link);
+      } else {
+        fragment.append(document.createTextNode(match[0]));
+      }
+    }
+    cursor = pattern.lastIndex;
+  }
+  if (cursor < line.length) fragment.append(document.createTextNode(line.slice(cursor)));
+}
+
+function renderDiscordMarkdownPreview(element, markdown) {
+  const source = String(markdown || 'El contenido de descargas aparecerá aquí.');
+  const lines = source.split(/\r?\n/u);
+  const fragment = document.createDocumentFragment();
+  lines.forEach((line, index) => {
+    appendDiscordMarkdownLine(fragment, line);
+    if (index < lines.length - 1) fragment.append(document.createElement('br'));
+  });
+  element.replaceChildren(fragment);
+}
+
+function updateClaimKeyDeliveryPreview() {
+  const form = $('#claim-key-delivery-form');
+  if (!form) return;
+
+  const credentialColor = form.elements.credentialEmbedColor.value || '#5865F2';
+  $('#claim-key-credential-color-value').textContent = credentialColor.toUpperCase();
+  $('#claim-key-credential-preview').style.borderLeftColor = credentialColor;
+  $('#claim-key-credential-preview-title').textContent = form.elements.credentialEmbedTitle.value.trim()
+    || 'Tus credenciales de acceso';
+  $('#claim-key-credential-preview-description').textContent = form.elements.credentialEmbedDescription.value.trim()
+    || 'Tus datos privados aparecerán en este primer embed.';
+  $('#claim-key-credential-preview-footer').textContent = form.elements.credentialEmbedFooter.value.trim()
+    || 'BLL$LIFE Access';
+
+  const deliveryColor = form.elements.deliveryEmbedColor.value || '#292C49';
+  $('#claim-key-delivery-color-value').textContent = deliveryColor.toUpperCase();
+  $('#claim-key-delivery-preview').style.borderLeftColor = deliveryColor;
+  $('#claim-key-delivery-preview-title').textContent = form.elements.deliveryEmbedTitle.value.trim()
+    || 'BLL $ LIFE · DESCARGAS';
+  renderDiscordMarkdownPreview(
+    $('#claim-key-delivery-preview-description'),
+    form.elements.deliveryEmbedDescription.value,
+  );
+  $('#claim-key-delivery-preview-footer').textContent = form.elements.deliveryEmbedFooter.value.trim()
+    || 'Copyright BLL $ LIFE';
+
+  const imageUrl = safeHttpsPreviewUrl(form.elements.deliveryEmbedImageUrl.value);
+  const thumbnailUrl = safeHttpsPreviewUrl(form.elements.deliveryEmbedThumbnailUrl.value);
+  $('#claim-key-delivery-image-placeholder').classList.toggle('hidden', Boolean(imageUrl));
+  setPreviewImage($('#claim-key-delivery-preview-image'), imageUrl);
+  setPreviewImage($('#claim-key-delivery-preview-thumbnail'), thumbnailUrl);
+}
+
+function updateClaimKeyConfirmationPreview() {
+  const form = $('#claim-key-confirmation-form');
+  if (!form) return;
+  const color = form.elements.confirmationEmbedColor.value || '#57F287';
+  $('#claim-key-confirmation-color-value').textContent = color.toUpperCase();
+  $('#claim-key-confirmation-preview').style.borderLeftColor = color;
+  $('#claim-key-confirmation-preview-title').textContent = form.elements.confirmationEmbedTitle.value.trim()
+    || 'Enviado por mensaje privado';
+  $('#claim-key-confirmation-preview-description').textContent = form.elements.confirmationEmbedDescription.value.trim()
+    || 'El usuario verá aquí la confirmación de entrega.';
+  $('#claim-key-confirmation-preview-footer').textContent = form.elements.confirmationEmbedFooter.value.trim()
+    || 'BLL$LIFE Access · Entrega completada';
+}
+
+function updateAllClaimKeyPreviews() {
+  updateClaimKeyPreview();
+  updateClaimKeyDeliveryPreview();
+  updateClaimKeyConfirmationPreview();
+}
+
+function switchClaimKeyEditorView(name) {
+  const selected = ['public', 'private', 'confirmation'].includes(name) ? name : 'public';
+  $$('[data-claim-key-editor-view]').forEach((tab) => {
+    const active = tab.dataset.claimKeyEditorView === selected;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
+  });
+  $$('.claim-key-editor-view').forEach((view) => {
+    const active = view.id === `claim-key-editor-${selected}`;
+    view.classList.toggle('active', active);
+    view.hidden = !active;
+  });
+}
+
+function handleClaimKeyEditorTabKeydown(event) {
+  const tabs = $$('[data-claim-key-editor-view]');
+  const currentIndex = tabs.indexOf(event.currentTarget);
+  let nextIndex = currentIndex;
+  if (event.key === 'Home') nextIndex = 0;
+  else if (event.key === 'End') nextIndex = tabs.length - 1;
+  else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+    nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+  } else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+    nextIndex = (currentIndex + 1) % tabs.length;
+  } else {
+    return;
+  }
+  event.preventDefault();
+  const nextTab = tabs[nextIndex];
+  switchClaimKeyEditorView(nextTab.dataset.claimKeyEditorView);
+  nextTab.focus();
+}
+
+async function saveClaimKeyDeliverySettings(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('[type="submit"]');
+  if (!beginClaimKeyAction(button, 'Guardando DM...')) return;
+  $('#claim-key-delivery-save-state').textContent = '';
+  try {
+    const data = await api('/api/claim-key', { method: 'PATCH', body: claimKeyDeliveryPayload() });
+    applyClaimKeyView(data);
+    fillForm(form, data.settings);
+    updateClaimKeyDeliveryPreview();
+    const sync = claimKeySyncSummary(data, 'Mensaje privado guardado');
+    $('#claim-key-delivery-save-state').textContent = sync.text;
+    toast(sync.failed
+      ? `Mensaje privado guardado; ${sync.failed} panel(es) públicos no pudieron sincronizarse.`
+      : 'Mensaje privado de Claim Key guardado.', sync.failed ? 'error' : 'success');
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    endClaimKeyAction(button);
+  }
+}
+
+async function saveClaimKeyConfirmationSettings(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('[type="submit"]');
+  if (!beginClaimKeyAction(button, 'Guardando...')) return;
+  $('#claim-key-confirmation-save-state').textContent = '';
+  try {
+    const data = await api('/api/claim-key', { method: 'PATCH', body: claimKeyConfirmationPayload() });
+    applyClaimKeyView(data);
+    fillForm(form, data.settings);
+    updateClaimKeyConfirmationPreview();
+    const sync = claimKeySyncSummary(data, 'Confirmación guardada');
+    $('#claim-key-confirmation-save-state').textContent = sync.text;
+    toast(sync.failed
+      ? `Confirmación guardada; ${sync.failed} panel(es) públicos no pudieron sincronizarse.`
+      : 'Confirmación efímera guardada.', sync.failed ? 'error' : 'success');
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    endClaimKeyAction(button);
+  }
+}
+
+function initializeClaimKeyMessageEditors() {
+  const root = $('#claim-key-view-panel');
+  if (!root || root.dataset.messageEditorsInitialized === 'true') return;
+  root.dataset.messageEditorsInitialized = 'true';
+  $$('[data-claim-key-editor-view]').forEach((tab) => {
+    tab.addEventListener('click', () => switchClaimKeyEditorView(tab.dataset.claimKeyEditorView));
+    tab.addEventListener('keydown', handleClaimKeyEditorTabKeydown);
+  });
+  const deliveryForm = $('#claim-key-delivery-form');
+  const confirmationForm = $('#claim-key-confirmation-form');
+  deliveryForm.addEventListener('input', updateClaimKeyDeliveryPreview);
+  deliveryForm.addEventListener('submit', saveClaimKeyDeliverySettings);
+  confirmationForm.addEventListener('input', updateClaimKeyConfirmationPreview);
+  confirmationForm.addEventListener('submit', saveClaimKeyConfirmationSettings);
 }
 
 function updateClaimKeyPreview() {

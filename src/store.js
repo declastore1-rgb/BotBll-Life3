@@ -38,6 +38,20 @@ const CLAIM_KEY_SETTING_KEYS = Object.freeze(new Set([
   'buttonStyle',
   'buttonColor',
   'buttonEmoji',
+  'credentialEmbedTitle',
+  'credentialEmbedDescription',
+  'credentialEmbedFooter',
+  'credentialEmbedColor',
+  'deliveryEmbedTitle',
+  'deliveryEmbedDescription',
+  'deliveryEmbedFooter',
+  'deliveryEmbedColor',
+  'deliveryEmbedImageUrl',
+  'deliveryEmbedThumbnailUrl',
+  'confirmationEmbedTitle',
+  'confirmationEmbedDescription',
+  'confirmationEmbedFooter',
+  'confirmationEmbedColor',
 ]));
 const clone = (value) => structuredClone(value);
 const normalizeUsername = (username) => username.trim().toLowerCase();
@@ -494,8 +508,41 @@ export class SettingsStore {
     if (typeof deliver !== 'function') throw new Error('La entrega de Claim Key no es válida.');
     return this.enqueueClaimKeyOperation(async () => {
       const result = await this.claimCredentialWithinOperation(guildId, discordUser);
-      if (result.status === 'claimed') await deliver(result);
-      return result;
+      if (result.status !== 'claimed') return result;
+      try {
+        await deliver(result);
+        return result;
+      } catch (cause) {
+        await this.rollbackClaimCredentialWithinOperation(guildId, result, discordUser);
+        const error = new Error(
+          'No se pudo completar la entrega privada. La credencial fue devuelta al inventario.',
+          { cause },
+        );
+        error.code = 'CLAIM_KEY_DM_FAILED';
+        error.reason = String(cause?.code) === '50007'
+          ? 'dm_closed'
+          : cause?.code === 'CLAIM_KEY_DM_INVALID'
+            ? 'invalid_payload'
+            : 'delivery_error';
+        throw error;
+      }
+    });
+  }
+
+  async rollbackClaimCredentialWithinOperation(guildId, result, discordUser) {
+    return this.mutate((data) => {
+      const section = data.guilds[guildId]?.claimKey;
+      const credential = section?.credentials.find((item) => (
+        item.id === result.credentialId
+        && item.claimedBy?.userId === result.userId
+        && item.claimedBy?.claimedAt === result.claimedAt
+      ));
+      if (!credential) return false;
+      credential.status = 'available';
+      credential.claimedBy = null;
+      const auditIdentity = String(discordUser?.tag || discordUser?.username || result.userId);
+      this.addAudit(auditIdentity, 'Claim Key', `Entrega privada revertida para el Discord ID ${result.userId}`);
+      return true;
     });
   }
 
@@ -523,9 +570,11 @@ export class SettingsStore {
         claimedAt,
       };
       const auditIdentity = credential.claimedBy.tag || credential.claimedBy.username || userId;
-      this.addAudit(auditIdentity, 'Claim Key', `Acceso entregado al Discord ID ${userId}`);
+      this.addAudit(auditIdentity, 'Claim Key', `Acceso asignado al Discord ID ${userId}`);
       return {
         status: 'claimed',
+        credentialId: credential.id,
+        userId,
         username: credential.username,
         password,
         claimedAt,

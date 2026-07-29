@@ -24,7 +24,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, '..', 'public');
-const DASHBOARD_VERSION = 'claim-key-20260729-3';
+const DASHBOARD_VERSION = 'claim-key-20260729-4';
 const loginAttempts = new Map();
 const SNOWFLAKE = /^\d{17,20}$/;
 const HEX_COLOR = /^#[0-9A-F]{6}$/i;
@@ -371,17 +371,64 @@ function sanitizeClaimKey(body, current, guild) {
   patch.buttonStyle = cleanButtonStyle(body.buttonStyle, current.buttonStyle);
   patch.buttonColor = BUTTON_STYLE_COLORS[patch.buttonStyle];
   patch.buttonEmoji = cleanEmoji(body.buttonEmoji, guild, current.buttonEmoji);
+  patch.credentialEmbedTitle = cleanText(body.credentialEmbedTitle, current.credentialEmbedTitle, 256);
+  patch.credentialEmbedDescription = cleanText(body.credentialEmbedDescription, current.credentialEmbedDescription, 4_000);
+  patch.credentialEmbedFooter = cleanText(body.credentialEmbedFooter, current.credentialEmbedFooter, 2_048);
+  patch.credentialEmbedColor = cleanColor(body.credentialEmbedColor, current.credentialEmbedColor);
+  patch.deliveryEmbedTitle = cleanText(body.deliveryEmbedTitle, current.deliveryEmbedTitle, 256);
+  patch.deliveryEmbedDescription = cleanText(body.deliveryEmbedDescription, current.deliveryEmbedDescription, 4_000);
+  patch.deliveryEmbedFooter = cleanText(body.deliveryEmbedFooter, current.deliveryEmbedFooter, 2_048);
+  patch.deliveryEmbedColor = cleanColor(body.deliveryEmbedColor, current.deliveryEmbedColor);
+  patch.deliveryEmbedImageUrl = cleanPublicUrl(body.deliveryEmbedImageUrl, current.deliveryEmbedImageUrl);
+  patch.deliveryEmbedThumbnailUrl = cleanPublicUrl(body.deliveryEmbedThumbnailUrl, current.deliveryEmbedThumbnailUrl);
+  patch.confirmationEmbedTitle = cleanText(body.confirmationEmbedTitle, current.confirmationEmbedTitle, 256);
+  patch.confirmationEmbedDescription = cleanText(body.confirmationEmbedDescription, current.confirmationEmbedDescription, 4_000);
+  patch.confirmationEmbedFooter = cleanText(body.confirmationEmbedFooter, current.confirmationEmbedFooter, 2_048);
+  patch.confirmationEmbedColor = cleanColor(body.confirmationEmbedColor, current.confirmationEmbedColor);
 
-  if (patch.panelDescription.length + patch.warningText.length + 4 > 4_096) {
+  const panelDescriptionOverhead = patch.warningText ? 4 : 0;
+  if (patch.panelDescription.length + patch.warningText.length + panelDescriptionOverhead > 4_096) {
     throw new Error('La descripción y la advertencia juntas superan el límite de 4096 caracteres de Discord.');
   }
-  const totalCharacters = patch.panelTitle.length
+
+  // Usuario y contraseña son campos dinámicos del primer embed. Se reserva su peor caso,
+  // incluyendo delimitadores y la expansión necesaria para neutralizar bloques de código.
+  const maximumCodeBlockValueLength = (maximum) => maximum + Math.floor(maximum / 3) + 8;
+  const credentialFieldReserve = 'Usuario'.length
+    + maximumCodeBlockValueLength(128)
+    + 'Contraseña'.length
+    + maximumCodeBlockValueLength(512);
+  const panelTotal = patch.panelTitle.length
     + patch.panelDescription.length
     + patch.warningText.length
+    + panelDescriptionOverhead
     + patch.footerText.length
     + patch.authorName.length;
-  if (totalCharacters > 6_000) {
-    throw new Error(`El panel supera el máximo total de 6000 caracteres (${totalCharacters}).`);
+  const credentialTotal = patch.credentialEmbedTitle.length
+    + patch.credentialEmbedDescription.length
+    + patch.credentialEmbedFooter.length
+    + credentialFieldReserve;
+  const deliveryTotal = patch.deliveryEmbedTitle.length
+    + patch.deliveryEmbedDescription.length
+    + patch.deliveryEmbedFooter.length;
+  const confirmationTotal = patch.confirmationEmbedTitle.length
+    + patch.confirmationEmbedDescription.length
+    + patch.confirmationEmbedFooter.length;
+  const embedTotals = [
+    ['panel público', panelTotal],
+    ['credenciales privadas', credentialTotal],
+    ['descargas privadas', deliveryTotal],
+    ['confirmación', confirmationTotal],
+  ];
+  const oversized = embedTotals.find(([, total]) => total > 6_000);
+  if (oversized) {
+    throw new Error(`El embed de ${oversized[0]} supera el máximo total de 6000 caracteres (${oversized[1]}).`);
+  }
+  const directMessageTotal = credentialTotal + deliveryTotal;
+  if (directMessageTotal > 6_000) {
+    throw new Error(
+      `Los dos embeds del mensaje privado superan juntos el máximo de 6000 caracteres de Discord (${directMessageTotal}).`,
+    );
   }
   return patch;
 }

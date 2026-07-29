@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090b12">
-  <meta name="app-version" content="claim-key-20260729-3">
+  <meta name="app-version" content="claim-key-20260729-4">
   <title>BLL $ LIFE · Control Center</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=claim-key-20260729-3">
-  <script src="/assets/app.js?v=claim-key-20260729-3" defer></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=claim-key-20260729-4">
+  <script src="/assets/app.js?v=claim-key-20260729-4" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -242,7 +242,14 @@
               <div class="claim-key-status-actions"><small id="claim-key-toggle-state" class="save-state"></small><button id="claim-key-toggle-button" class="button ghost" type="button" disabled>Cargando...</button></div>
             </article>
 
-            <div class="claim-key-layout">
+            <div class="claim-key-flow-tabs" role="tablist" aria-label="Mensajes del flujo Claim Key">
+              <button id="claim-key-editor-tab-public" class="claim-key-flow-tab active" type="button" role="tab" tabindex="0" aria-selected="true" aria-controls="claim-key-editor-public" data-claim-key-editor-view="public"><span>01</span><div><strong>Panel público</strong><small>Mensaje y botón del servidor</small></div></button>
+              <button id="claim-key-editor-tab-private" class="claim-key-flow-tab" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="claim-key-editor-private" data-claim-key-editor-view="private"><span>02</span><div><strong>DM privado</strong><small>Credenciales y descargas</small></div></button>
+              <button id="claim-key-editor-tab-confirmation" class="claim-key-flow-tab" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="claim-key-editor-confirmation" data-claim-key-editor-view="confirmation"><span>03</span><div><strong>Confirmación</strong><small>Respuesta después del envío</small></div></button>
+            </div>
+
+            <div id="claim-key-editor-public" class="claim-key-editor-view active" role="tabpanel" aria-labelledby="claim-key-editor-tab-public">
+              <div class="claim-key-layout">
               <form id="claim-key-form" class="panel-card settings-form claim-key-editor">
                 <div class="card-header"><div><div class="eyebrow">EDITOR</div><h3>Panel de reclamación</h3></div></div>
                 <div class="setting-row featured"><div><strong>Permitir “Obtener clave”</strong><p>Controla las entregas desde todos los paneles publicados. También puedes pausarlas con el control superior.</p></div><label class="switch"><input name="enabled" type="checkbox"><span></span></label></div>
@@ -291,6 +298,89 @@
               <div><div class="eyebrow">PUBLICACIÓN</div><h3>Enviar panel al servidor</h3><p>Requiere entregas activas y al menos una credencial disponible. Los paneles guardados se sincronizan al editar.</p><small id="claim-key-publish-state" class="save-state"></small></div>
               <div class="publish-controls"><select id="claim-key-publish-channel"><option value="">Selecciona un canal</option></select><button id="claim-key-publish-button" class="button secondary" type="button" disabled>Publicar panel</button></div>
             </article>
+            </div>
+
+            <div id="claim-key-editor-private" class="claim-key-editor-view" role="tabpanel" aria-labelledby="claim-key-editor-tab-private" hidden>
+              <div class="claim-key-layout claim-key-delivery-layout">
+                <form id="claim-key-delivery-form" class="panel-card settings-form claim-key-editor" autocomplete="off">
+                  <div class="card-header"><div><div class="eyebrow">MENSAJE DIRECTO</div><h3>Paquete privado del usuario</h3><p class="muted helper-copy">Discord recibirá ambos embeds en un solo DM para evitar entregas incompletas.</p></div><span class="source-message-chip">Base · 1532097372006383617</span></div>
+                  <section class="claim-key-editor-section">
+                    <div class="editor-section-heading"><span>01</span><div><strong>Credenciales privadas</strong><small>Primer embed del mensaje directo</small></div></div>
+                    <div class="form-grid two">
+                      <label class="field"><span>Título</span><input name="credentialEmbedTitle" maxlength="256" required></label>
+                      <label class="field color-field"><span>Color</span><div><input name="credentialEmbedColor" type="color" value="#5865f2"><code id="claim-key-credential-color-value">#5865F2</code></div></label>
+                    </div>
+                    <label class="field"><span>Descripción</span><textarea name="credentialEmbedDescription" rows="4" maxlength="4000" required></textarea></label>
+                    <label class="field"><span>Footer</span><input name="credentialEmbedFooter" maxlength="2048" required></label>
+                  </section>
+                  <section class="claim-key-editor-section featured-section">
+                    <div class="editor-section-heading"><span>02</span><div><strong>Embed de descargas</strong><small>Contenido basado en la referencia que enviaste</small></div></div>
+                    <div class="form-grid two">
+                      <label class="field"><span>Título</span><input name="deliveryEmbedTitle" maxlength="256" required></label>
+                      <label class="field color-field"><span>Color</span><div><input name="deliveryEmbedColor" type="color" value="#292c49"><code id="claim-key-delivery-color-value">#292C49</code></div></label>
+                    </div>
+                    <label class="field"><span>Contenido Markdown</span><textarea name="deliveryEmbedDescription" rows="14" maxlength="4000" spellcheck="false" required></textarea><small>Admite títulos en negrita y enlaces con formato [TEXTO](https://...).</small></label>
+                    <label class="field"><span>Footer</span><input name="deliveryEmbedFooter" maxlength="2048" required></label>
+                    <div class="form-grid two">
+                      <label class="field"><span>Banner (HTTPS)</span><input name="deliveryEmbedImageUrl" type="url" maxlength="2048" placeholder="https://..."><small>Pega aquí la URL del banner original cuando la tengas.</small></label>
+                      <label class="field"><span>Miniatura (HTTPS)</span><input name="deliveryEmbedThumbnailUrl" type="url" maxlength="2048" placeholder="https://..."></label>
+                    </div>
+                  </section>
+                  <div class="form-actions"><span id="claim-key-delivery-save-state" class="save-state"></span><button class="button primary" type="submit" disabled>Guardar mensaje privado</button></div>
+                </form>
+
+                <aside class="panel-card claim-key-preview-panel claim-key-dm-preview-panel">
+                  <div><div class="eyebrow">VISTA PREVIA · DM</div><h3>Conversación privada</h3><p class="muted helper-copy">El usuario recibirá este paquete antes de ver la confirmación.</p></div>
+                  <div class="discord-dm-preview">
+                    <div class="discord-dm-header"><span class="discord-dm-avatar">BL</span><div><strong>BLL $ LIFE</strong><small>BOT · ahora</small></div></div>
+                    <div class="discord-dm-note"><span>✓</span><p>Entrega privada protegida. Tus datos no aparecen en el canal.</p></div>
+                    <article id="claim-key-credential-preview" class="claim-key-preview-embed dm-preview-embed">
+                      <div class="claim-key-preview-body">
+                        <h4 id="claim-key-credential-preview-title">Tus credenciales de acceso</h4>
+                        <p id="claim-key-credential-preview-description"></p>
+                        <div class="dm-credential-fields"><div><span>USUARIO</span><code id="claim-key-credential-preview-username">usuario_demo</code></div><div><span>CONTRASEÑA</span><code id="claim-key-credential-preview-password">••••••••••••</code></div></div>
+                        <small id="claim-key-credential-preview-footer"></small>
+                      </div>
+                    </article>
+                    <article id="claim-key-delivery-preview" class="claim-key-preview-embed dm-preview-embed delivery-preview-embed">
+                      <div class="claim-key-preview-body">
+                        <h4 id="claim-key-delivery-preview-title">BLL $ LIFE · DESCARGAS</h4>
+                        <div id="claim-key-delivery-preview-description" class="discord-markdown-preview"></div>
+                        <div id="claim-key-delivery-image-placeholder" class="dm-image-placeholder"><span>BLL $</span><strong>LIFE</strong><small>PLACEHOLDER · AÑADE UN BANNER HTTPS</small></div>
+                        <img id="claim-key-delivery-preview-image" class="embed-preview-image hidden" alt="Banner del mensaje privado">
+                        <small id="claim-key-delivery-preview-footer"></small>
+                      </div>
+                      <img id="claim-key-delivery-preview-thumbnail" class="embed-preview-thumbnail hidden" alt="Miniatura del mensaje privado">
+                    </article>
+                  </div>
+                </aside>
+              </div>
+            </div>
+
+            <div id="claim-key-editor-confirmation" class="claim-key-editor-view" role="tabpanel" aria-labelledby="claim-key-editor-tab-confirmation" hidden>
+              <div class="claim-key-layout claim-key-confirmation-layout">
+                <form id="claim-key-confirmation-form" class="panel-card settings-form claim-key-editor">
+                  <div class="card-header"><div><div class="eyebrow">RESPUESTA EFÍMERA</div><h3>Confirmación de entrega</h3><p class="muted helper-copy">Aparece después de que Discord confirma el envío del DM.</p></div></div>
+                  <div class="form-grid two">
+                    <label class="field"><span>Título</span><input name="confirmationEmbedTitle" maxlength="256" required></label>
+                    <label class="field color-field"><span>Color</span><div><input name="confirmationEmbedColor" type="color" value="#57f287"><code id="claim-key-confirmation-color-value">#57F287</code></div></label>
+                  </div>
+                  <label class="field"><span>Descripción</span><textarea name="confirmationEmbedDescription" rows="7" maxlength="4000" required></textarea></label>
+                  <label class="field"><span>Footer</span><input name="confirmationEmbedFooter" maxlength="2048" required></label>
+                  <div class="delivery-flow-summary"><span>1</span><p><strong>Reserva cifrada</strong><small>Se asigna una credencial disponible.</small></p><i></i><span>2</span><p><strong>DM confirmado</strong><small>Credenciales y descargas se envían juntas.</small></p><i></i><span>3</span><p><strong>Confirmación</strong><small>Este embed aparece solo al usuario.</small></p></div>
+                  <div class="form-actions"><span id="claim-key-confirmation-save-state" class="save-state"></span><button class="button primary" type="submit" disabled>Guardar confirmación</button></div>
+                </form>
+                <aside class="panel-card claim-key-preview-panel claim-key-confirmation-preview-panel">
+                  <div><div class="eyebrow">VISTA PREVIA</div><h3>Respuesta del botón</h3><p class="muted helper-copy">Solo la persona que reclamó verá este resultado.</p></div>
+                  <div class="claim-key-discord-preview confirmation-discord-preview">
+                    <article id="claim-key-confirmation-preview" class="claim-key-preview-embed">
+                      <div class="claim-key-preview-body"><h4 id="claim-key-confirmation-preview-title"></h4><p id="claim-key-confirmation-preview-description"></p><small id="claim-key-confirmation-preview-footer"></small></div>
+                    </article>
+                    <span class="ephemeral-preview-note">Solo tú puedes ver esto · Descartar mensaje</span>
+                  </div>
+                </aside>
+              </div>
+            </div>
           </div>
 
           <div id="claim-key-view-inventory" class="claim-key-subpage" role="tabpanel" aria-labelledby="claim-key-tab-inventory" hidden>
