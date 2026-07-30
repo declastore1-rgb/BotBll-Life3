@@ -26,6 +26,7 @@ const CLAIM_KEY_MAX_IMPORT = 250;
 const CLAIM_KEY_MAX_CREDENTIALS = 5_000;
 const CLIENT_MAX_ACCOUNTS = 5_000;
 const CLIENT_PORTAL_MAX_DOWNLOADS = 20;
+const EMBED_MAX_PER_USER = 100;
 const CLIENT_DOWNLOAD_ID = /^[a-zA-Z0-9_-]{1,36}$/;
 const CLAIM_KEY_SETTING_KEYS = Object.freeze(new Set([
   'enabled',
@@ -308,6 +309,71 @@ function publicClientPortal(section, includeDisabled = false) {
   };
 }
 
+function userCanManageEmbeds(user) {
+  return Boolean(user && !user.disabled && (user.isAdmin || user.permissions.includes('embeds')));
+}
+
+function requireEmbedOwnerId(actor) {
+  if (!actor?.id || typeof actor.id !== 'string') {
+    throw new Error('No se pudo identificar al propietario del embed.');
+  }
+  return actor.id;
+}
+
+function requireCurrentEmbedManager(data, ownerUserId) {
+  const owner = data.users.find((user) => user.id === ownerUserId);
+  if (!userCanManageEmbeds(owner)) {
+    throw new Error('Tu usuario ya no tiene permiso para administrar embeds.');
+  }
+  return owner;
+}
+
+function publicSavedEmbed(embed) {
+  const { ownerUserId: _ownerUserId, ...safeEmbed } = embed;
+  return clone(safeEmbed);
+}
+
+function publicEmbedSchedule(schedule) {
+  const { ownerUserId: _ownerUserId, ...safeSchedule } = schedule;
+  return clone(safeSchedule);
+}
+
+function normalizeOwnedEmbeds(section, users, adminUsername) {
+  const usersById = new Map(users.map((user) => [user.id, user]));
+  const configuredAdmin = users.find(
+    (user) => user.isAdmin
+      && normalizeUsername(user.username) === normalizeUsername(adminUsername),
+  );
+  const fallbackOwner = configuredAdmin
+    ?? users.find((user) => user.isAdmin && !user.disabled)
+    ?? users.find((user) => user.isAdmin)
+    ?? users[0]
+    ?? null;
+  const saved = [];
+  for (const stored of Array.isArray(section?.saved) ? section.saved : []) {
+    if (!stored || typeof stored !== 'object' || typeof stored.id !== 'string' || !stored.id) continue;
+    const ownerUserId = usersById.has(stored.ownerUserId)
+      ? stored.ownerUserId
+      : fallbackOwner?.id;
+    if (!ownerUserId) continue;
+    saved.push({ ...clone(stored), ownerUserId });
+  }
+  const ownerByEmbedId = new Map(saved.map((embed) => [embed.id, embed.ownerUserId]));
+  const schedules = [];
+  for (const stored of Array.isArray(section?.schedules) ? section.schedules : []) {
+    if (!stored || typeof stored !== 'object' || typeof stored.id !== 'string' || !stored.id) continue;
+    const ownerUserId = ownerByEmbedId.get(stored.embedId);
+    if (!ownerUserId) continue;
+    const owner = usersById.get(ownerUserId);
+    schedules.push({
+      ...clone(stored),
+      ownerUserId,
+      enabled: userCanManageEmbeds(owner) ? Boolean(stored.enabled) : false,
+    });
+  }
+  return { ...clone(section ?? {}), saved, schedules };
+}
+
 function validateUsername(username) {
   if (typeof username !== 'string' || !/^[a-zA-Z0-9_.-]{3,32}$/.test(username.trim())) {
     throw new Error('El usuario debe tener entre 3 y 32 caracteres: letras, números, punto, guion o guion bajo.');
@@ -367,7 +433,7 @@ export class SettingsStore {
       this.data = { version: 1, users: [], guilds: {}, audit: [] };
     }
 
-    this.data.version = Math.max(Number(this.data.version) || 1, 3);
+    this.data.version = Math.max(Number(this.data.version) || 1, 4);
     this.data.users ??= [];
     this.data.clients ??= [];
     this.data.guilds ??= {};
@@ -458,6 +524,12 @@ export class SettingsStore {
       this.addAudit(username, 'Sistema', 'Administrador inicial creado');
     }
 
+    this.data.guilds[this.guildId].embeds = normalizeOwnedEmbeds(
+      this.data.guilds[this.guildId].embeds,
+      this.data.users,
+      this.adminUsername,
+    );
+
     await this.persist();
   }
 
@@ -490,7 +562,15 @@ export class SettingsStore {
 
   addAudit(actor, module, action) {
     const data = this.mutationData ?? this.data;
-    data.audit.unshift({ id: randomUUID(), actor: actorName(actor), module, action, at: new Date().toISOString() });
+    const actorId = typeof actor === 'object' && typeof actor?.id === 'string' ? actor.id : null;
+    data.audit.unshift({
+      id: randomUUID(),
+      actor: actorName(actor),
+      actorId,
+      module,
+      action,
+      at: new Date().toISOString(),
+    });
     data.audit = data.audit.slice(0, 100);
   }
 
@@ -747,49 +827,167 @@ export class SettingsStore {
     });
   }
 
+  getUserEmbeds(guildId, ownerUserId) {
+    const section = this.data.guilds[guildId]?.embeds;
+    const owner = this.data.users.find((user) => user.id === ownerUserId);
+    if (
+      !section
+      || typeof ownerUserId !== 'string'
+      || !ownerUserId
+      || !userCanManageEmbeds(owner)
+    ) {
+      return { saved: [], schedules: [] };
+    }
+    const saved = section.saved
+      .filter((embed) => embed.ownerUserId === ownerUserId)
+      .map(publicSavedEmbed);
+    const embedIds = new Set(saved.map((embed) => embed.id));
+    const schedules = section.schedules
+      .filter((schedule) => schedule.ownerUserId === ownerUserId && embedIds.has(schedule.embedId))
+      .map(publicEmbedSchedule);
+    return { saved, schedules };
+  }
+
+  getUserEmbed(guildId, embedId, ownerUserId) {
+    const owner = this.data.users.find((user) => user.id === ownerUserId);
+    if (!userCanManageEmbeds(owner)) return null;
+    const embed = this.data.guilds[guildId]?.embeds?.saved.find(
+      (item) => item.id === embedId && item.ownerUserId === ownerUserId,
+    );
+    return embed ? publicSavedEmbed(embed) : null;
+  }
+
   async saveEmbed(guildId, embed, actor) {
+    const ownerUserId = requireEmbedOwnerId(actor);
     return this.mutate((data) => {
+      const currentActor = requireCurrentEmbedManager(data, ownerUserId);
       const list = data.guilds[guildId].embeds.saved;
       const index = embed.id ? list.findIndex((item) => item.id === embed.id) : -1;
-      if (index < 0 && list.length >= 100) throw new Error('Has alcanzado el límite de 100 embeds guardados.');
+      if (embed.id && (index < 0 || list[index].ownerUserId !== ownerUserId)) {
+        throw new Error('Embed no encontrado.');
+      }
+      const ownedCount = list.filter((item) => item.ownerUserId === ownerUserId).length;
+      if (index < 0 && ownedCount >= EMBED_MAX_PER_USER) {
+        throw new Error(`Has alcanzado el límite de ${EMBED_MAX_PER_USER} embeds guardados.`);
+      }
       const now = new Date().toISOString();
-      const value = { ...clone(embed), id: index >= 0 ? embed.id : randomUUID(), updatedAt: now };
+      const value = {
+        ...clone(embed),
+        id: index >= 0 ? embed.id : randomUUID(),
+        ownerUserId,
+        updatedAt: now,
+      };
       if (index >= 0) list[index] = { ...list[index], ...value };
       else list.push({ ...value, createdAt: now });
-      this.addAudit(actor, 'Embeds', `${index >= 0 ? 'Embed actualizado' : 'Embed creado'}: ${value.name}`);
-      return clone(index >= 0 ? list[index] : list.at(-1));
+      this.addAudit(currentActor, 'Embeds', `${index >= 0 ? 'Embed actualizado' : 'Embed creado'}: ${value.name}`);
+      return publicSavedEmbed(index >= 0 ? list[index] : list.at(-1));
     });
   }
 
   async deleteEmbed(guildId, id, actor) {
+    const ownerUserId = requireEmbedOwnerId(actor);
     return this.mutate((data) => {
+      const currentActor = requireCurrentEmbedManager(data, ownerUserId);
       const section = data.guilds[guildId].embeds;
-      const embed = section.saved.find((item) => item.id === id);
+      const embed = section.saved.find(
+        (item) => item.id === id && item.ownerUserId === ownerUserId,
+      );
       if (!embed) throw new Error('Embed no encontrado.');
-      section.saved = section.saved.filter((item) => item.id !== id);
-      section.schedules = section.schedules.filter((item) => item.embedId !== id);
-      this.addAudit(actor, 'Embeds', `Embed eliminado: ${embed.name}`);
+      section.saved = section.saved.filter(
+        (item) => item.id !== id || item.ownerUserId !== ownerUserId,
+      );
+      section.schedules = section.schedules.filter(
+        (item) => item.embedId !== id || item.ownerUserId !== ownerUserId,
+      );
+      this.addAudit(currentActor, 'Embeds', `Embed eliminado: ${embed.name}`);
       return true;
     });
   }
 
   async saveSchedule(guildId, schedule, actor) {
+    const ownerUserId = requireEmbedOwnerId(actor);
     return this.mutate((data) => {
-      const list = data.guilds[guildId].embeds.schedules;
-      const index = list.findIndex((item) => item.embedId === schedule.embedId);
-      const value = { ...clone(schedule), id: index >= 0 ? list[index].id : randomUUID() };
-      if (index >= 0) list[index] = value; else list.push(value);
-      this.addAudit(actor, 'Embeds', 'Programación actualizada');
-      return clone(value);
+      const currentActor = requireCurrentEmbedManager(data, ownerUserId);
+      const section = data.guilds[guildId].embeds;
+      const embed = section.saved.find(
+        (item) => item.id === schedule.embedId && item.ownerUserId === ownerUserId,
+      );
+      if (!embed) throw new Error('Embed no encontrado.');
+      const index = section.schedules.findIndex((item) => item.embedId === schedule.embedId);
+      if (index >= 0 && section.schedules[index].ownerUserId !== ownerUserId) {
+        throw new Error('Embed no encontrado.');
+      }
+      const value = {
+        ...clone(schedule),
+        id: index >= 0 ? section.schedules[index].id : randomUUID(),
+        ownerUserId,
+      };
+      if (index >= 0) section.schedules[index] = value;
+      else section.schedules.push(value);
+      this.addAudit(currentActor, 'Embeds', `Programación actualizada: ${embed.name}`);
+      return publicEmbedSchedule(value);
     });
   }
 
-  async deleteSchedule(guildId, embedId, actor = 'Sistema') {
+  async deleteSchedule(guildId, embedId, actor) {
+    const ownerUserId = requireEmbedOwnerId(actor);
+    return this.mutate((data) => {
+      const currentActor = requireCurrentEmbedManager(data, ownerUserId);
+      const section = data.guilds[guildId].embeds;
+      const embed = section.saved.find(
+        (item) => item.id === embedId && item.ownerUserId === ownerUserId,
+      );
+      if (!embed) throw new Error('Embed no encontrado.');
+      section.schedules = section.schedules.filter(
+        (item) => item.embedId !== embedId || item.ownerUserId !== ownerUserId,
+      );
+      this.addAudit(currentActor, 'Embeds', `Programación eliminada: ${embed.name}`);
+      return true;
+    });
+  }
+
+  async deleteOrphanedSchedule(guildId, scheduleId) {
     return this.mutate((data) => {
       const section = data.guilds[guildId].embeds;
-      section.schedules = section.schedules.filter((item) => item.embedId !== embedId);
-      this.addAudit(actor, 'Embeds', 'Programación eliminada');
+      const schedule = section.schedules.find((item) => item.id === scheduleId);
+      if (!schedule) return false;
+      const hasOwnedEmbed = section.saved.some(
+        (embed) => embed.id === schedule.embedId && embed.ownerUserId === schedule.ownerUserId,
+      );
+      if (hasOwnedEmbed) return false;
+      section.schedules = section.schedules.filter((item) => item.id !== scheduleId);
       return true;
+    }, {
+      shouldPersist: (deleted) => deleted,
+    });
+  }
+
+  async reserveScheduleRun(guildId, expectedSchedule, now = Date.now()) {
+    return this.mutate((data) => {
+      const section = data.guilds[guildId].embeds;
+      const schedule = section.schedules.find((item) => item.id === expectedSchedule?.id);
+      if (
+        !schedule
+        || !schedule.enabled
+        || schedule.nextRunAt > now
+        || schedule.embedId !== expectedSchedule.embedId
+        || schedule.ownerUserId !== expectedSchedule.ownerUserId
+        || schedule.channelId !== expectedSchedule.channelId
+        || schedule.intervalMinutes !== expectedSchedule.intervalMinutes
+      ) return null;
+      const owner = data.users.find((user) => user.id === schedule.ownerUserId);
+      const embed = section.saved.find(
+        (item) => item.id === schedule.embedId && item.ownerUserId === schedule.ownerUserId,
+      );
+      if (!embed || !userCanManageEmbeds(owner)) return null;
+      schedule.nextRunAt = now + schedule.intervalMinutes * 60_000;
+      schedule.lastError = '';
+      return {
+        schedule: publicEmbedSchedule(schedule),
+        embed: publicSavedEmbed(embed),
+      };
+    }, {
+      shouldPersist: (reservation) => reservation !== null,
     });
   }
 
@@ -798,7 +996,7 @@ export class SettingsStore {
       const schedule = data.guilds[guildId].embeds.schedules.find((item) => item.id === id);
       if (!schedule) return null;
       Object.assign(schedule, clone(patch));
-      return clone(schedule);
+      return publicEmbedSchedule(schedule);
     });
   }
 
@@ -1129,6 +1327,13 @@ export class SettingsStore {
         user.passwordSalt = passwordCredentials.salt;
         user.sessionVersion += 1;
       }
+      if (!userCanManageEmbeds(user)) {
+        for (const guild of Object.values(data.guilds)) {
+          for (const schedule of guild.embeds?.schedules ?? []) {
+            if (schedule.ownerUserId === user.id) schedule.enabled = false;
+          }
+        }
+      }
       user.updatedAt = new Date().toISOString();
       this.addAudit(actor, 'Usuarios', `Usuario ${user.username} actualizado`);
       return publicUser(user);
@@ -1161,8 +1366,22 @@ export class SettingsStore {
         const activeAdmins = data.users.filter((item) => item.isAdmin && !item.disabled);
         if (activeAdmins.length <= 1) throw new Error('No puedes eliminar al último administrador.');
       }
+      let removedEmbeds = 0;
+      for (const guild of Object.values(data.guilds)) {
+        if (!guild.embeds) continue;
+        const previousCount = guild.embeds.saved.length;
+        guild.embeds.saved = guild.embeds.saved.filter((embed) => embed.ownerUserId !== user.id);
+        guild.embeds.schedules = guild.embeds.schedules.filter(
+          (schedule) => schedule.ownerUserId !== user.id,
+        );
+        removedEmbeds += previousCount - guild.embeds.saved.length;
+      }
       data.users.splice(index, 1);
-      this.addAudit(actor, 'Usuarios', `Usuario ${user.username} eliminado`);
+      this.addAudit(
+        actor,
+        'Usuarios',
+        `Usuario ${user.username} eliminado${removedEmbeds ? ` junto con ${removedEmbeds} embed(s)` : ''}`,
+      );
       return publicUser(user);
     });
   }

@@ -1746,7 +1746,7 @@ function createSavedEmbedCard(embed) {
 function renderSavedEmbeds() {
   const list = $('#saved-embeds-list');
   if (!state.embeds.length) {
-    list.innerHTML = '<p class="empty-state">No hay embeds guardados.</p>';
+    list.innerHTML = '<p class="empty-state">No tienes embeds guardados.</p>';
     return;
   }
   list.replaceChildren(...state.embeds.map(createSavedEmbedCard));

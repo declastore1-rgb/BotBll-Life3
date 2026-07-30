@@ -30,19 +30,21 @@ export class EmbedScheduler {
         const embed = section.saved.find((item) => item.id === schedule.embedId);
         const nextRunAt = now + schedule.intervalMinutes * 60_000;
         if (!embed) {
-          await this.store.deleteSchedule(this.guildId, schedule.embedId);
+          await this.store.deleteOrphanedSchedule(this.guildId, schedule.id);
           continue;
         }
         try {
           const channel = guild.channels.cache.get(schedule.channelId)
             ?? await guild.channels.fetch(schedule.channelId);
           if (!channel?.isTextBased() || channel.isThread()) throw new Error('Canal no disponible');
-          // Reservar el próximo ciclo antes de enviar evita duplicados si el proceso cae tras publicar.
-          await this.store.updateScheduleRun(this.guildId, schedule.id, {
-            nextRunAt,
-            lastError: '',
-          });
-          await channel.send({ embeds: [buildCustomEmbed(embed)] });
+          // La reserva revalida owner, permisos y configuración justo antes de publicar.
+          const reservation = await this.store.reserveScheduleRun(
+            this.guildId,
+            schedule,
+            now,
+          );
+          if (!reservation) continue;
+          await channel.send({ embeds: [buildCustomEmbed(reservation.embed)] });
           await this.store.updateScheduleRun(this.guildId, schedule.id, {
             lastRunAt: now,
             lastError: '',

@@ -25,7 +25,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, '..', 'public');
-const DASHBOARD_VERSION = 'client-portal-20260729-9';
+const DASHBOARD_VERSION = 'client-portal-20260729-10';
 const loginAttempts = new Map();
 const passwordChangeAttempts = new Map();
 const passwordChangeInFlight = new Map();
@@ -1063,15 +1063,19 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
     const claimKeyStats = can(user, 'claimkey')
       ? store.getClaimKeyAdminView(config.guildId).stats
       : null;
-    const audit = store.getAudit().filter((entry) => {
+    const audit = store.getAudit(100).filter((entry) => {
       if (entry.module === 'Anti-Raid') return can(user, 'antiraid');
       if (entry.module === 'Anti-Nuke') return can(user, 'antinuke');
       if (entry.module === 'AutoMod') return can(user, 'automod');
       if (entry.module === 'Tickets') return can(user, 'tickets');
       if (entry.module === 'Claim Key') return can(user, 'claimkey');
-      if (entry.module === 'Embeds') return can(user, 'embeds');
+      if (entry.module === 'Embeds') return can(user, 'embeds') && entry.actorId === user.id;
       if (entry.module === 'Clientes') return can(user, 'clients');
       return can(user, 'users');
+    }).slice(0, 12).map((entry) => {
+      const publicEntry = { ...entry };
+      delete publicEntry.actorId;
+      return publicEntry;
     });
     response.json({
       bot: {
@@ -1395,8 +1399,8 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
     }
   });
 
-  app.get('/api/embeds', requirePermission('embeds'), (_request, response) => {
-    response.json(store.getGuildSettings(config.guildId).embeds);
+  app.get('/api/embeds', requirePermission('embeds'), (request, response) => {
+    response.json(store.getUserEmbeds(config.guildId, request.dashboardAuth.user.id));
   });
 
   app.post('/api/embeds', requirePermission('embeds'), async (request, response, next) => {
@@ -1408,7 +1412,7 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
 
   app.patch('/api/embeds/:id', requirePermission('embeds'), async (request, response, next) => {
     try {
-      const current = store.getGuildSettings(config.guildId).embeds.saved.find((item) => item.id === request.params.id);
+      const current = store.getUserEmbed(config.guildId, request.params.id, request.dashboardAuth.user.id);
       if (!current) throw new Error('Embed no encontrado.');
       const embed = await store.saveEmbed(config.guildId, sanitizeSavedEmbed(request.body ?? {}, current), request.dashboardAuth.user);
       response.json({ embed });
@@ -1422,11 +1426,14 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
 
   app.post('/api/embeds/:id/send', requirePermission('embeds'), async (request, response, next) => {
     try {
-      const section = store.getGuildSettings(config.guildId).embeds;
-      const embed = section.saved.find((item) => item.id === request.params.id);
+      const ownerUserId = request.dashboardAuth.user.id;
+      if (!store.getUserEmbed(config.guildId, request.params.id, ownerUserId)) {
+        throw new Error('Embed o canal no disponible.');
+      }
       const channelId = cleanSnowflake(request.body?.channelId, 'Canal', true);
       const guild = client.guilds.cache.get(config.guildId);
       const channel = guild?.channels.cache.get(channelId) ?? await guild?.channels.fetch(channelId).catch(() => null);
+      const embed = store.getUserEmbed(config.guildId, request.params.id, ownerUserId);
       if (!embed || !channel?.isTextBased() || channel.isThread()) throw new Error('Embed o canal no disponible.');
       await channel.send({ embeds: [buildCustomEmbed(embed)] });
       response.json({ ok: true });
@@ -1438,7 +1445,7 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
       const channelId = cleanSnowflake(request.body?.channelId, 'Canal', true);
       const intervalMinutes = cleanInteger(request.body ?? {}, 'intervalMinutes', 5, 43_200);
       if (intervalMinutes === undefined) throw new Error('Debes indicar el intervalo de envío.');
-      const section = store.getGuildSettings(config.guildId).embeds;
+      const section = store.getUserEmbeds(config.guildId, request.dashboardAuth.user.id);
       if (!section.saved.some((item) => item.id === request.params.id)) throw new Error('Embed no encontrado.');
       const guild = client.guilds.cache.get(config.guildId);
       const channel = guild?.channels.cache.get(channelId) ?? await guild?.channels.fetch(channelId).catch(() => null);
