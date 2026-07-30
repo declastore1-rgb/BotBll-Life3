@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090b12">
-  <meta name="app-version" content="claim-key-20260729-4">
+  <meta name="app-version" content="client-portal-20260729-9">
   <title>BLL $ LIFE · Control Center</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=claim-key-20260729-4">
-  <script src="/assets/app.js?v=claim-key-20260729-4" defer></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=client-portal-20260729-9">
+  <script src="/assets/app.js?v=client-portal-20260729-9" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -18,11 +18,11 @@
       <div class="brand-mark large">BL</div>
       <div class="eyebrow">SECURITY CONSOLE</div>
       <h1>BLL <span>$</span> LIFE</h1>
-      <p class="muted login-copy">Administra la seguridad y el soporte de tu comunidad desde un solo lugar.</p>
+      <p class="muted login-copy">Accede al panel administrativo o a tu centro privado de descargas.</p>
       <form id="login-form" class="stack" autocomplete="on">
         <label class="field">
           <span>Usuario</span>
-          <input name="username" value="Linox" autocomplete="username" required maxlength="32">
+          <input name="username" autocomplete="username" required minlength="3" maxlength="32" placeholder="Tu usuario">
         </label>
         <label class="field">
           <span>Contraseña</span>
@@ -54,6 +54,7 @@
         <button class="nav-item" data-page="tickets" data-permission="tickets"><span class="nav-icon">▱</span><span>Tickets</span></button>
         <button class="nav-item" data-page="claimkey" data-permission="claimkey"><span class="nav-icon">◇</span><span>Claim Key</span></button>
         <button class="nav-item" data-page="embeds" data-permission="embeds"><span class="nav-icon">▤</span><span>Embeds</span></button>
+        <button class="nav-item" data-page="clients" data-permission="clients"><span class="nav-icon">◫</span><span>Admin Clients</span></button>
         <button class="nav-item" data-page="users" data-permission="users"><span class="nav-icon">◎</span><span>Usuarios</span></button>
         <button class="nav-item" data-page="account"><span class="nav-icon">○</span><span>Mi cuenta</span></button>
       </nav>
@@ -82,6 +83,7 @@
             <article class="stat-card"><span class="stat-label">Tickets abiertos</span><strong id="stat-tickets">0</strong><small>Canales activos</small></article>
             <article class="stat-card" data-permission="claimkey"><span class="stat-label">Claim Key</span><strong id="stat-claimkey">—</strong><small id="stat-claimkey-detail">Accesos disponibles</small></article>
             <article class="stat-card"><span class="stat-label">Miembros</span><strong id="stat-members">0</strong><small id="stat-guild">Servidor</small></article>
+            <article class="stat-card" data-permission="clients"><span class="stat-label">Clientes web</span><strong id="stat-clients">0</strong><small>Accesos del portal</small></article>
             <article class="stat-card"><span class="stat-label">Usuarios del panel</span><strong id="stat-users">0</strong><small>Accesos configurados</small></article>
           </div>
           <div class="two-column">
@@ -458,6 +460,37 @@
           </div>
         </section>
 
+        <section id="page-clients" class="page">
+          <div class="section-heading">
+            <div><div class="eyebrow">PORTAL PRIVADO</div><h3>Admin Clients</h3><p class="muted">Gestiona accesos exclusivos y mantén actualizado el catálogo de descargas.</p></div>
+            <button id="new-client-button" class="button primary" type="button">Nuevo cliente</button>
+          </div>
+          <div class="client-admin-stats" aria-label="Resumen de clientes">
+            <article class="stat-card"><span class="stat-label">Clientes totales</span><strong id="admin-client-total">0</strong><small>Cuentas registradas</small></article>
+            <article class="stat-card"><span class="stat-label">Accesos activos</span><strong id="admin-client-active">0</strong><small>Con inicio de sesión habilitado</small></article>
+            <article class="stat-card"><span class="stat-label">Descargas visibles</span><strong id="admin-download-active">0</strong><small>Publicadas en el portal</small></article>
+          </div>
+          <div class="client-admin-layout">
+            <article class="panel-card client-accounts-panel">
+              <div class="card-header"><div><div class="eyebrow">CUENTAS EXCLUSIVAS</div><h3>Usuarios cliente</h3><p class="muted helper-copy">Estas cuentas no pueden entrar al panel del personal.</p></div><button id="refresh-clients" class="button ghost" type="button">Actualizar</button></div>
+              <div id="clients-grid" class="clients-grid"><p class="empty-state">Cargando clientes...</p></div>
+            </article>
+
+            <form id="client-portal-form" class="panel-card settings-form client-catalog-editor">
+              <div class="card-header"><div><div class="eyebrow">CATÁLOGO WEB</div><h3>Centro de descargas</h3><p class="muted helper-copy">Los cambios aparecen para todos los clientes activos.</p></div><button id="add-client-download" class="button ghost" type="button">Añadir descarga</button></div>
+              <div class="form-grid two">
+                <label class="field"><span>Título del portal</span><input name="title" maxlength="120" required></label>
+                <label class="field"><span>Aviso de seguridad</span><input name="notice" maxlength="500" required></label>
+              </div>
+              <label class="field"><span>Descripción</span><textarea name="description" rows="3" maxlength="1000" required></textarea></label>
+              <div class="divider"></div>
+              <div class="catalog-editor-heading"><div><div class="eyebrow">DESCARGAS</div><h4>Enlaces publicados</h4></div><span id="client-download-count" class="badge neutral">0 / 20</span></div>
+              <div id="client-download-editors" class="client-download-editors"><p class="empty-state">No hay descargas configuradas.</p></div>
+              <div class="form-actions"><span id="client-portal-save-state" class="save-state"></span><button class="button primary" type="submit">Guardar catálogo</button></div>
+            </form>
+          </div>
+        </section>
+
         <section id="page-users" class="page">
           <div class="section-heading"><div><div class="eyebrow">CONTROL DE ACCESO</div><h3>Usuarios del Dashboard</h3><p class="muted">Crea accesos separados para cada responsabilidad.</p></div><button id="new-user-button" class="button primary" type="button">Nuevo usuario</button></div>
           <div id="users-grid" class="users-grid"></div>
@@ -466,15 +499,48 @@
         <section id="page-account" class="page">
           <div class="section-heading"><div><div class="eyebrow">SEGURIDAD PERSONAL</div><h3>Mi cuenta</h3><p class="muted">Actualiza tu contraseña de acceso al panel.</p></div></div>
           <form id="password-form" class="panel-card compact-form">
-            <label class="field"><span>Contraseña actual</span><input name="currentPassword" type="password" autocomplete="current-password" required></label>
+            <label class="field"><span>Contraseña actual</span><input name="currentPassword" type="password" autocomplete="current-password" maxlength="128" required></label>
             <label class="field"><span>Nueva contraseña</span><input name="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required><small>Usa una contraseña larga y única. La contraseña “12” es insegura.</small></label>
-            <label class="field"><span>Repetir nueva contraseña</span><input name="confirmPassword" type="password" autocomplete="new-password" required></label>
+            <label class="field"><span>Repetir nueva contraseña</span><input name="confirmPassword" type="password" autocomplete="new-password" maxlength="128" required></label>
             <div class="form-actions"><button class="button primary" type="submit">Cambiar contraseña</button></div>
           </form>
         </section>
       </div>
     </div>
   </div>
+
+  <main id="client-view" class="client-shell hidden">
+    <header class="client-topbar">
+      <div class="client-brand"><div class="brand-mark">BL</div><div><strong>BLL $ LIFE</strong><small>Portal de Clientes</small></div></div>
+      <div class="client-session">
+        <div class="client-session-copy"><span id="client-display-name">Cliente</span><small id="client-username">—</small></div>
+        <div id="client-avatar" class="user-avatar">C</div>
+        <button id="client-logout-button" class="button ghost" type="button">Cerrar sesión</button>
+      </div>
+    </header>
+    <div class="client-content">
+      <section class="client-hero">
+        <div class="client-hero-copy"><div class="eyebrow">ACCESO PRIVADO VERIFICADO</div><h1 id="client-portal-title">Centro de Descargas BLL $ LIFE</h1><p id="client-portal-description">Cargando tus descargas autorizadas...</p><div id="client-portal-notice" class="client-security-notice" role="note"></div></div>
+        <div class="client-access-seal" aria-hidden="true"><span>BLL</span><strong>CLIENT</strong><small>SECURE ACCESS</small></div>
+      </section>
+      <div class="client-portal-layout">
+        <section class="client-download-section" aria-labelledby="client-download-heading">
+          <div class="section-heading compact-heading"><div><div class="eyebrow">CATÁLOGO OFICIAL</div><h2 id="client-download-heading">Tus descargas</h2><p class="muted">Abre únicamente enlaces publicados en este portal.</p></div><span id="client-catalog-updated" class="badge neutral">Actualizando</span></div>
+          <div id="client-downloads" class="client-download-grid"><p class="empty-state">Cargando catálogo...</p></div>
+        </section>
+        <aside class="panel-card client-account-panel">
+          <div><div class="eyebrow">MI ACCESO</div><h3>Seguridad de la cuenta</h3><p class="muted helper-copy">Actualiza tu contraseña sin salir del portal.</p></div>
+          <form id="client-password-form" class="stack" autocomplete="off">
+            <label class="field"><span>Contraseña actual</span><input name="currentPassword" type="password" autocomplete="current-password" maxlength="128" required></label>
+            <label class="field"><span>Nueva contraseña</span><input name="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></label>
+            <label class="field"><span>Repetir contraseña</span><input name="confirmPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></label>
+            <button class="button primary wide" type="submit">Cambiar contraseña</button>
+          </form>
+          <div class="client-account-tip"><span>✓</span><p><strong>Cuenta aislada</strong><small>Este acceso no concede permisos administrativos ni acceso al bot.</small></p></div>
+        </aside>
+      </div>
+    </div>
+  </main>
 
   <dialog id="extra-button-dialog" class="modal">
     <form id="extra-button-form" method="dialog">
@@ -509,12 +575,29 @@
           <label class="check-card"><input name="permissions" type="checkbox" value="tickets"><span><strong>Tickets</strong><small>Configurar y publicar panel.</small></span></label>
           <label class="check-card"><input name="permissions" type="checkbox" value="claimkey"><span><strong>Claim Key</strong><small>Configurar panel, inventario y entregas.</small></span></label>
           <label class="check-card"><input name="permissions" type="checkbox" value="embeds"><span><strong>Embeds</strong><small>Crear, enviar y programar mensajes.</small></span></label>
+          <label class="check-card"><input name="permissions" type="checkbox" value="clients"><span><strong>Admin Clients</strong><small>Gestionar clientes y enlaces de descarga.</small></span></label>
           <label class="check-card"><input name="permissions" type="checkbox" value="users"><span><strong>Usuarios</strong><small>Crear y editar accesos.</small></span></label>
         </div>
       </fieldset>
       <label id="disabled-row" class="check-row hidden"><input name="disabled" type="checkbox"><span><strong>Cuenta desactivada</strong><small>Impide iniciar nuevas sesiones.</small></span></label>
       <p id="user-form-error" class="form-error hidden"></p>
       <div class="form-actions"><button class="button ghost modal-cancel" type="button">Cancelar</button><button class="button primary" type="submit">Guardar usuario</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="client-account-dialog" class="modal client-account-dialog">
+    <form id="client-account-form" method="dialog" autocomplete="off">
+      <div class="modal-header"><div><div class="eyebrow">PORTAL DE CLIENTES</div><h3 id="client-account-dialog-title">Nuevo cliente</h3></div><button class="icon-button client-modal-close" type="button" aria-label="Cerrar">×</button></div>
+      <input name="id" type="hidden">
+      <input name="expectedUpdatedAt" type="hidden">
+      <div class="form-grid two">
+        <label class="field"><span>Nombre visible</span><input name="displayName" maxlength="80" required placeholder="Cliente Premium"></label>
+        <label class="field"><span>Usuario de acceso</span><input name="username" pattern="[a-zA-Z0-9_.-]{3,32}" minlength="3" maxlength="32" autocomplete="off" required></label>
+      </div>
+      <label class="field"><span>Contraseña</span><input name="password" type="password" minlength="8" maxlength="128" autocomplete="new-password"><small id="client-account-password-help">Obligatoria al crear. Mínimo 8 caracteres.</small></label>
+      <label class="check-row"><input name="disabled" type="checkbox"><span><strong>Cuenta desactivada</strong><small>Bloquea el inicio de sesión y cierra cualquier sesión vigente.</small></span></label>
+      <p id="client-account-form-error" class="form-error hidden"></p>
+      <div class="form-actions"><button class="button ghost client-modal-cancel" type="button">Cancelar</button><button class="button primary" type="submit">Guardar cliente</button></div>
     </form>
   </dialog>
 

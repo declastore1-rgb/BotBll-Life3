@@ -16,6 +16,7 @@ export const dashboardPermissions = Object.freeze([
   'tickets',
   'claimkey',
   'embeds',
+  'clients',
   'users',
 ]);
 
@@ -23,6 +24,9 @@ const CLAIM_KEY_CIPHER = 'aes-256-gcm';
 const CLAIM_KEY_CONTEXT = 'bll-claim-key-credentials-v1';
 const CLAIM_KEY_MAX_IMPORT = 250;
 const CLAIM_KEY_MAX_CREDENTIALS = 5_000;
+const CLIENT_MAX_ACCOUNTS = 5_000;
+const CLIENT_PORTAL_MAX_DOWNLOADS = 20;
+const CLIENT_DOWNLOAD_ID = /^[a-zA-Z0-9_-]{1,36}$/;
 const CLAIM_KEY_SETTING_KEYS = Object.freeze(new Set([
   'enabled',
   'panelTitle',
@@ -56,6 +60,19 @@ const CLAIM_KEY_SETTING_KEYS = Object.freeze(new Set([
 const clone = (value) => structuredClone(value);
 const normalizeUsername = (username) => username.trim().toLowerCase();
 const actorName = (actor) => typeof actor === 'string' ? actor : actor?.username ?? 'Sistema';
+
+function clientConflictError(message) {
+  const error = new Error(message);
+  error.code = 'CLIENT_CONFLICT';
+  return error;
+}
+
+function nextUpdatedAt(previousUpdatedAt) {
+  const previousTimestamp = Number.isFinite(Date.parse(previousUpdatedAt))
+    ? Date.parse(previousUpdatedAt)
+    : 0;
+  return new Date(Math.max(Date.now(), previousTimestamp + 1)).toISOString();
+}
 
 function deriveClaimKeyEncryptionKey(secret) {
   if (typeof secret !== 'string' || secret.length < 32) {
@@ -161,6 +178,84 @@ function normalizeClaimKeyPanels(value) {
   return panels;
 }
 
+function isPublicHttpsUrl(value) {
+  if (typeof value !== 'string' || value.length > 2_048) return false;
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (url.protocol !== 'https:' || url.username || url.password) return false;
+    if (host === 'localhost' || host === '::1' || host.endsWith('.local') || host.includes(':')) return false;
+    const parts = host.split('.').map(Number);
+    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+    return !(parts[0] === 10
+      || parts[0] === 127
+      || parts[0] === 0
+      || (parts[0] === 169 && parts[1] === 254)
+      || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
+      || (parts[0] === 192 && parts[1] === 168));
+  } catch {
+    return false;
+  }
+}
+
+function storedText(value, fallback, maximum) {
+  if (typeof value !== 'string') return fallback;
+  const clean = value.trim();
+  return clean && clean.length <= maximum ? clean : fallback;
+}
+
+function normalizeClientPortal(existing = {}, defaults = {}) {
+  const fallbackDownloads = Array.isArray(defaults.downloads) ? defaults.downloads : [];
+  const source = Array.isArray(existing.downloads) ? existing.downloads : fallbackDownloads;
+  const downloads = [];
+  const ids = new Set();
+  for (const [index, item] of source.slice(0, CLIENT_PORTAL_MAX_DOWNLOADS).entries()) {
+    if (!item || typeof item !== 'object' || !isPublicHttpsUrl(item.url)) continue;
+    let id = CLIENT_DOWNLOAD_ID.test(String(item.id ?? '')) ? String(item.id) : `download-${index + 1}`;
+    if (ids.has(id)) id = randomUUID();
+    ids.add(id);
+    downloads.push({
+      id,
+      name: storedText(item.name, `Descarga ${index + 1}`, 80),
+      version: storedText(item.version, 'Actual', 40),
+      description: storedText(item.description, 'Descarga disponible para clientes autorizados.', 500),
+      buttonLabel: storedText(item.buttonLabel, 'Descargar', 80),
+      url: new URL(item.url).toString(),
+      enabled: item.enabled !== false,
+      updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : new Date().toISOString(),
+    });
+  }
+  return {
+    title: storedText(existing.title, storedText(defaults.title, 'Centro de Descargas', 120), 120),
+    description: storedText(
+      existing.description,
+      storedText(defaults.description, 'Descargas disponibles para clientes.', 1_000),
+      1_000,
+    ),
+    notice: storedText(existing.notice, storedText(defaults.notice, 'No compartas tu cuenta.', 500), 500),
+    downloads,
+    updatedAt: typeof existing.updatedAt === 'string' ? existing.updatedAt : new Date().toISOString(),
+  };
+}
+
+function normalizeStoredClient(value) {
+  if (!value || typeof value !== 'object') return null;
+  let username;
+  try { username = validateUsername(value.username); } catch { return null; }
+  if (typeof value.passwordHash !== 'string' || typeof value.passwordSalt !== 'string') return null;
+  return {
+    id: typeof value.id === 'string' && value.id ? value.id : randomUUID(),
+    username,
+    displayName: storedText(value.displayName, username, 80),
+    passwordHash: value.passwordHash,
+    passwordSalt: value.passwordSalt,
+    sessionVersion: Number.isInteger(value.sessionVersion) && value.sessionVersion > 0 ? value.sessionVersion : 1,
+    disabled: Boolean(value.disabled),
+    createdAt: typeof value.createdAt === 'string' ? value.createdAt : new Date().toISOString(),
+    updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : new Date().toISOString(),
+  };
+}
+
 function publicClaimKeyView(section) {
   const credentials = (section.credentials ?? []).map((credential) => ({
     id: credential.id,
@@ -187,7 +282,30 @@ function publicUser(user) {
     sessionVersion: _sessionVersion,
     ...safeUser
   } = user;
-  return clone(safeUser);
+  return { ...clone(safeUser), accountType: 'staff' };
+}
+
+function publicClient(client) {
+  const {
+    passwordHash: _passwordHash,
+    passwordSalt: _passwordSalt,
+    sessionVersion: _sessionVersion,
+    ...safeClient
+  } = client;
+  return { ...clone(safeClient), accountType: 'client' };
+}
+
+function publicClientPortal(section, includeDisabled = false) {
+  const downloads = (section?.downloads ?? [])
+    .filter((download) => includeDisabled || download.enabled)
+    .map((download) => clone(download));
+  return {
+    title: section?.title ?? 'Centro de Descargas',
+    description: section?.description ?? '',
+    notice: section?.notice ?? '',
+    updatedAt: section?.updatedAt ?? null,
+    downloads,
+  };
 }
 
 function validateUsername(username) {
@@ -202,6 +320,14 @@ function validatePassword(password, minimum = 8) {
     throw new Error(`La contraseña debe tener entre ${minimum} y 128 caracteres.`);
   }
   return password;
+}
+
+function validateDisplayName(displayName, fallback) {
+  if (displayName === undefined) return fallback;
+  if (typeof displayName !== 'string') throw new Error('El nombre visible del cliente no es válido.');
+  const clean = displayName.trim();
+  if (!clean || clean.length > 80) throw new Error('El nombre visible debe tener entre 1 y 80 caracteres.');
+  return clean;
 }
 
 function normalizePermissions(permissions) {
@@ -241,8 +367,9 @@ export class SettingsStore {
       this.data = { version: 1, users: [], guilds: {}, audit: [] };
     }
 
-    this.data.version = Math.max(Number(this.data.version) || 1, 2);
+    this.data.version = Math.max(Number(this.data.version) || 1, 3);
     this.data.users ??= [];
+    this.data.clients ??= [];
     this.data.guilds ??= {};
     this.data.audit ??= [];
     for (const user of this.data.users) {
@@ -251,6 +378,19 @@ export class SettingsStore {
         ? [...dashboardPermissions]
         : normalizePermissions(user.permissions);
     }
+    const occupiedUsernames = new Set(
+      this.data.users.map((user) => normalizeUsername(user.username)),
+    );
+    const clients = [];
+    for (const stored of this.data.clients.slice(0, CLIENT_MAX_ACCOUNTS)) {
+      const client = normalizeStoredClient(stored);
+      if (!client) continue;
+      const normalized = normalizeUsername(client.username);
+      if (occupiedUsernames.has(normalized)) continue;
+      occupiedUsernames.add(normalized);
+      clients.push(client);
+    }
+    this.data.clients = clients;
     const existing = this.data.guilds[this.guildId] ?? {};
     const existingClaimKey = existing.claimKey ?? {};
     const claimKeyCredentials = [];
@@ -290,6 +430,7 @@ export class SettingsStore {
         credentials: claimKeyCredentials,
         publishedPanels: normalizeClaimKeyPanels(existingClaimKey.publishedPanels),
       },
+      clientPortal: normalizeClientPortal(existing.clientPortal, this.defaults.clientPortal),
       embeds: {
         ...clone(this.defaults.embeds),
         ...(existing.embeds ?? {}),
@@ -744,6 +885,160 @@ export class SettingsStore {
     });
   }
 
+  getClientPortal(guildId = this.guildId, includeDisabled = false) {
+    const section = this.data.guilds[guildId]?.clientPortal;
+    if (!section) throw new Error('El portal de clientes no está disponible.');
+    return publicClientPortal(section, includeDisabled);
+  }
+
+  async updateClientPortal(guildId, portal, actor, expectedUpdatedAt) {
+    if (!portal || typeof portal !== 'object' || !Array.isArray(portal.downloads)) {
+      throw new Error('La configuración del portal de clientes no es válida.');
+    }
+    if (typeof expectedUpdatedAt !== 'string' || !expectedUpdatedAt) {
+      throw new Error('Recarga Admin Clients antes de guardar el catálogo.');
+    }
+    if (portal.downloads.length > CLIENT_PORTAL_MAX_DOWNLOADS) {
+      throw new Error(`El catálogo admite un máximo de ${CLIENT_PORTAL_MAX_DOWNLOADS} descargas.`);
+    }
+    return this.mutate((data) => {
+      const current = data.guilds[guildId]?.clientPortal;
+      if (!current) throw new Error('El portal de clientes no está disponible.');
+      if (current.updatedAt !== expectedUpdatedAt) {
+        throw clientConflictError('El catálogo cambió en otra sesión. Recarga la página antes de volver a guardar.');
+      }
+      const updatedAt = nextUpdatedAt(current.updatedAt);
+      const normalized = normalizeClientPortal({ ...portal, updatedAt }, current);
+      if (normalized.downloads.length !== portal.downloads.length) {
+        throw new Error('El catálogo contiene una descarga o URL no válida.');
+      }
+      data.guilds[guildId].clientPortal = normalized;
+      this.addAudit(actor, 'Clientes', `Catálogo actualizado: ${normalized.downloads.length} descarga(s)`);
+      return publicClientPortal(normalized, true);
+    });
+  }
+
+  getClientByUsername(username) {
+    if (typeof username !== 'string') return null;
+    const normalized = normalizeUsername(username);
+    return this.data.clients.find((client) => normalizeUsername(client.username) === normalized) ?? null;
+  }
+
+  getClientById(id) {
+    return this.data.clients.find((client) => client.id === id) ?? null;
+  }
+
+  listClients() {
+    return this.data.clients.map(publicClient);
+  }
+
+  async createClient(input, actor) {
+    const username = validateUsername(input.username);
+    const displayName = validateDisplayName(input.displayName, username);
+    const password = validatePassword(input.password);
+    if (this.getUserByUsername(username) || this.getClientByUsername(username)) {
+      throw new Error('Ese nombre de usuario ya está en uso.');
+    }
+    if (this.data.clients.length >= CLIENT_MAX_ACCOUNTS) {
+      throw new Error(`El portal admite un máximo de ${CLIENT_MAX_ACCOUNTS} clientes.`);
+    }
+    const credentials = await hashPassword(password);
+    return this.mutate((data) => {
+      const normalized = normalizeUsername(username);
+      const duplicate = data.users.some((user) => normalizeUsername(user.username) === normalized)
+        || data.clients.some((client) => normalizeUsername(client.username) === normalized);
+      if (duplicate) throw new Error('Ese nombre de usuario ya está en uso.');
+      if (data.clients.length >= CLIENT_MAX_ACCOUNTS) {
+        throw new Error(`El portal admite un máximo de ${CLIENT_MAX_ACCOUNTS} clientes.`);
+      }
+      const now = new Date().toISOString();
+      const client = {
+        id: randomUUID(),
+        username,
+        displayName,
+        passwordHash: credentials.hash,
+        passwordSalt: credentials.salt,
+        sessionVersion: 1,
+        disabled: Boolean(input.disabled),
+        createdAt: now,
+        updatedAt: now,
+      };
+      data.clients.push(client);
+      this.addAudit(actor, 'Clientes', `Cliente ${username} creado`);
+      return publicClient(client);
+    });
+  }
+
+  async updateClient(id, input, actor, expectedUpdatedAt) {
+    if (typeof expectedUpdatedAt !== 'string' || !expectedUpdatedAt) {
+      throw new Error('Recarga las cuentas de clientes antes de guardar cambios.');
+    }
+    const target = this.getClientById(id);
+    if (!target) throw new Error('Cliente no encontrado.');
+    if (target.updatedAt !== expectedUpdatedAt) {
+      throw clientConflictError('La cuenta cambió en otra sesión. Recarga Admin Clients antes de volver a guardar.');
+    }
+    const username = input.username === undefined ? target.username : validateUsername(input.username);
+    const displayName = validateDisplayName(input.displayName, target.displayName);
+    const passwordCredentials = input.password ? await hashPassword(validatePassword(input.password)) : null;
+    return this.mutate((data) => {
+      const client = data.clients.find((item) => item.id === id);
+      if (!client) throw new Error('Cliente no encontrado.');
+      if (client.updatedAt !== expectedUpdatedAt) {
+        throw clientConflictError('La cuenta cambió en otra sesión. Recarga Admin Clients antes de volver a guardar.');
+      }
+      const normalized = normalizeUsername(username);
+      const duplicate = data.users.some((user) => normalizeUsername(user.username) === normalized)
+        || data.clients.some((item) => item.id !== id && normalizeUsername(item.username) === normalized);
+      if (duplicate) throw new Error('Ese nombre de usuario ya está en uso.');
+      const nextDisabled = input.disabled === undefined ? client.disabled : Boolean(input.disabled);
+      const invalidateSessions = Boolean(passwordCredentials)
+        || nextDisabled !== client.disabled
+        || username !== client.username;
+      client.username = username;
+      client.displayName = displayName;
+      client.disabled = nextDisabled;
+      if (passwordCredentials) {
+        client.passwordHash = passwordCredentials.hash;
+        client.passwordSalt = passwordCredentials.salt;
+      }
+      if (invalidateSessions) client.sessionVersion += 1;
+      client.updatedAt = nextUpdatedAt(client.updatedAt);
+      this.addAudit(actor, 'Clientes', `Cliente ${client.username} actualizado`);
+      return publicClient(client);
+    });
+  }
+
+  async changeClientPassword(id, password, actor) {
+    const credentials = await hashPassword(validatePassword(password));
+    return this.mutate((data) => {
+      const client = data.clients.find((item) => item.id === id);
+      if (!client) throw new Error('Cliente no encontrado.');
+      client.passwordHash = credentials.hash;
+      client.passwordSalt = credentials.salt;
+      client.sessionVersion += 1;
+      client.updatedAt = nextUpdatedAt(client.updatedAt);
+      this.addAudit(actor, 'Clientes', `Contraseña actualizada: ${client.username}`);
+      return client.sessionVersion;
+    });
+  }
+
+  async deleteClient(id, actor, expectedUpdatedAt) {
+    if (typeof expectedUpdatedAt !== 'string' || !expectedUpdatedAt) {
+      throw new Error('Recarga las cuentas de clientes antes de eliminar esta cuenta.');
+    }
+    return this.mutate((data) => {
+      const index = data.clients.findIndex((client) => client.id === id);
+      if (index < 0) throw new Error('Cliente no encontrado.');
+      if (data.clients[index].updatedAt !== expectedUpdatedAt) {
+        throw clientConflictError('La cuenta cambió en otra sesión. Recarga Admin Clients antes de eliminarla.');
+      }
+      const [client] = data.clients.splice(index, 1);
+      this.addAudit(actor, 'Clientes', `Cliente ${client.username} eliminado`);
+      return publicClient(client);
+    });
+  }
+
   getUserByUsername(username) {
     if (typeof username !== 'string') return null;
     const normalized = normalizeUsername(username);
@@ -764,10 +1059,16 @@ export class SettingsStore {
     const permissions = normalizePermissions(input.permissions);
     const isAdmin = Boolean(input.isAdmin);
     validateDelegation(actor, permissions, isAdmin);
-    if (this.getUserByUsername(username)) throw new Error('Ese nombre de usuario ya existe.');
+    if (this.getUserByUsername(username) || this.getClientByUsername(username)) {
+      throw new Error('Ese nombre de usuario ya está en uso.');
+    }
     const credentials = await hashPassword(password);
 
     return this.mutate((data) => {
+      const normalized = normalizeUsername(username);
+      const duplicate = data.users.some((user) => normalizeUsername(user.username) === normalized)
+        || data.clients.some((client) => normalizeUsername(client.username) === normalized);
+      if (duplicate) throw new Error('Ese nombre de usuario ya está en uso.');
       const user = {
         id: randomUUID(),
         username,
@@ -804,10 +1105,12 @@ export class SettingsStore {
       const user = data.users.find((item) => item.id === id);
       if (!user) throw new Error('Usuario no encontrado.');
       const nextUsername = input.username === undefined ? user.username : validateUsername(input.username);
-      const duplicate = data.users.find(
+      const duplicate = data.users.some(
         (item) => item.id !== id && normalizeUsername(item.username) === normalizeUsername(nextUsername),
+      ) || data.clients.some(
+        (client) => normalizeUsername(client.username) === normalizeUsername(nextUsername),
       );
-      if (duplicate) throw new Error('Ese nombre de usuario ya existe.');
+      if (duplicate) throw new Error('Ese nombre de usuario ya está en uso.');
 
       const nextAdmin = input.isAdmin === undefined ? user.isAdmin : Boolean(input.isAdmin);
       const nextDisabled = input.disabled === undefined ? user.disabled : Boolean(input.disabled);
@@ -871,4 +1174,8 @@ export function can(user, permission) {
 
 export function toPublicUser(user) {
   return user ? publicUser(user) : null;
+}
+
+export function toPublicClient(client) {
+  return client ? publicClient(client) : null;
 }

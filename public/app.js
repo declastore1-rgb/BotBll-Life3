@@ -1,9 +1,20 @@
 const state = {
   user: null,
   csrf: null,
+  authGeneration: 0,
+  sessionGeneration: 0,
   permissions: [],
   resources: null,
   users: [],
+  clients: [],
+  userDialogGeneration: 0,
+  clientAccountDialogGeneration: 0,
+  clientPortal: { downloads: [] },
+  clientPortalDirty: false,
+  clientPortalRevision: 0,
+  clientPortalLoadGeneration: 0,
+  clientPortalSaveGeneration: 0,
+  clientPortalSaving: false,
   extraButtons: [],
   claimKey: {
     settings: null,
@@ -25,9 +36,13 @@ const pages = {
   tickets: 'Tickets',
   claimkey: 'Claim Key',
   embeds: 'Embeds',
+  clients: 'Admin Clients',
   users: 'Usuarios',
   account: 'Mi cuenta',
 };
+const permissionPages = new Set([
+  'antiraid', 'antinuke', 'automod', 'tickets', 'claimkey', 'embeds', 'clients', 'users',
+]);
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -45,7 +60,14 @@ async function api(path, options = {}) {
   const response = await fetch(path, request);
   let payload;
   try { payload = await response.json(); } catch { payload = {}; }
-  if (response.status === 401 && path !== '/api/auth/login') showLogin();
+  if (
+    response.status === 401
+    && !['/api/auth/login', '/api/auth/logout', '/api/auth/session'].includes(path)
+  ) {
+    const sessionWasVisible = Boolean(state.user);
+    showLogin();
+    if (sessionWasVisible) window.location.replace('/');
+  }
   if (!response.ok) throw new Error(payload.error || 'No se pudo completar la solicitud.');
   return payload;
 }
@@ -70,33 +92,182 @@ function setButtonBusy(button, busy, label) {
   }
 }
 
-function showLogin() {
-  state.user = null;
-  state.csrf = null;
-  $('#app-view').classList.add('hidden');
-  $('#login-view').classList.remove('hidden');
+function activateDashboardPage(name) {
+  $$('.page').forEach((page) => page.classList.toggle('active', page.id === `page-${name}`));
+  $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.page === name));
+  $('#page-title').textContent = pages[name] ?? 'Resumen';
 }
 
-async function showDashboard(session) {
+function clearSessionUi() {
+  $$('#app-view form, #client-view form, dialog form').forEach((form) => form.reset());
+  $$('dialog[open]').forEach((dialog) => dialog.close());
+  state.resources = null;
+  state.users = [];
+  state.clients = [];
+  state.clientPortal = { downloads: [] };
+  state.clientPortalDirty = false;
+  state.clientPortalRevision += 1;
+  state.clientPortalLoadGeneration += 1;
+  state.clientPortalSaveGeneration += 1;
+  state.clientPortalSaving = false;
+  state.userDialogGeneration += 1;
+  state.clientAccountDialogGeneration += 1;
+  setButtonBusy($('#client-portal-form [type="submit"]'), false);
+  state.extraButtons = [];
+  state.embeds = [];
+  state.schedules = [];
+  state.claimKey = {
+    settings: null,
+    stats: { available: 0, claimed: 0, total: 0 },
+    credentials: [],
+    loaded: false,
+    actionPending: false,
+    viewRevision: 0,
+    loadGeneration: 0,
+  };
+  [
+    '#audit-list', '#antinuke-incidents', '#claim-key-list', '#saved-embeds-list',
+    '#users-grid', '#clients-grid', '#client-download-editors', '#client-downloads',
+  ].forEach((selector) => $(selector)?.replaceChildren());
+  $('#client-portal-save-state').textContent = '';
+}
+
+function showLogin() {
+  state.authGeneration += 1;
+  state.sessionGeneration += 1;
+  state.user = null;
+  state.csrf = null;
+  state.permissions = [];
+  clearSessionUi();
+  activateDashboardPage('overview');
+  closeSidebar();
+  $('#app-view').classList.add('hidden');
+  $('#client-view').classList.add('hidden');
+  $('#login-view').classList.remove('hidden');
+  setButtonBusy($('#login-submit'), false);
+  $('#login-password').value = '';
+}
+
+async function showDashboard(session, authGeneration = state.authGeneration) {
+  if (session.user?.accountType === 'client') return showClientPortal(session, authGeneration);
+  if (state.authGeneration !== authGeneration) return false;
+  state.sessionGeneration += 1;
   state.user = session.user;
   state.csrf = session.csrf;
-  $('#login-view').classList.add('hidden');
-  $('#app-view').classList.remove('hidden');
+  state.permissions = [];
+  activateDashboardPage('overview');
   $('#current-username').textContent = state.user.username;
   $('#current-role').textContent = state.user.isAdmin ? 'Administrador' : 'Operador';
   $('#user-avatar').textContent = state.user.username.slice(0, 1).toUpperCase();
-  await loadOverview();
+  const overviewLoaded = await loadOverview(authGeneration);
+  if (!overviewLoaded || state.authGeneration !== authGeneration) return false;
   applyPermissions();
+  $('#login-view').classList.add('hidden');
+  $('#client-view').classList.add('hidden');
+  $('#app-view').classList.remove('hidden');
+  return true;
+}
+
+async function showClientPortal(session, authGeneration = state.authGeneration) {
+  if (state.authGeneration !== authGeneration) return false;
+  state.sessionGeneration += 1;
+  state.user = session.user;
+  state.csrf = session.csrf;
+  state.permissions = [];
+  $('#client-display-name').textContent = state.user.displayName || state.user.username;
+  $('#client-username').textContent = `@${state.user.username}`;
+  $('#client-avatar').textContent = state.user.username.slice(0, 1).toUpperCase();
+  const portalLoaded = await loadClientPortal(authGeneration);
+  if (!portalLoaded || state.authGeneration !== authGeneration) return false;
+  $('#login-view').classList.add('hidden');
+  $('#app-view').classList.add('hidden');
+  $('#client-view').classList.remove('hidden');
+  return true;
+}
+
+async function showAuthenticated(session, authGeneration = state.authGeneration) {
+  if (state.authGeneration !== authGeneration) return false;
+  if (session.user?.accountType === 'client') return showClientPortal(session, authGeneration);
+  return showDashboard(session, authGeneration);
+}
+
+async function loadClientPortal(authGeneration = null) {
+  if (authGeneration !== null && state.authGeneration !== authGeneration) return false;
+  const data = await api('/api/client/downloads');
+  if (authGeneration !== null && state.authGeneration !== authGeneration) return false;
+  state.user = data.client;
+  state.clientPortal = data.portal;
+  $('#client-display-name').textContent = data.client.displayName || data.client.username;
+  $('#client-username').textContent = `@${data.client.username}`;
+  $('#client-portal-title').textContent = data.portal.title;
+  $('#client-portal-description').textContent = data.portal.description;
+  $('#client-portal-notice').textContent = data.portal.notice;
+  const updatedAt = new Date(data.portal.updatedAt);
+  $('#client-catalog-updated').textContent = Number.isNaN(updatedAt.getTime())
+    ? 'Catálogo oficial'
+    : `Actualizado ${updatedAt.toLocaleDateString('es-ES', { dateStyle: 'medium' })}`;
+  renderClientDownloads(data.portal.downloads);
+  return true;
+}
+
+function renderClientDownloads(downloads) {
+  const grid = $('#client-downloads');
+  if (!downloads.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'No hay descargas disponibles en este momento.';
+    grid.replaceChildren(empty);
+    return;
+  }
+  grid.replaceChildren(...downloads.map((download, index) => {
+    const card = document.createElement('article');
+    card.className = 'client-download-card';
+    const header = document.createElement('div');
+    header.className = 'client-download-header';
+    const number = document.createElement('span');
+    number.className = 'client-download-number';
+    number.textContent = String(index + 1).padStart(2, '0');
+    const identity = document.createElement('div');
+    const title = document.createElement('h3');
+    title.textContent = download.name;
+    const version = document.createElement('span');
+    version.className = 'badge neutral';
+    version.textContent = download.version;
+    identity.append(title, version);
+    header.append(number, identity);
+    const description = document.createElement('p');
+    description.textContent = download.description;
+    const footer = document.createElement('div');
+    footer.className = 'client-download-footer';
+    const host = document.createElement('small');
+    try { host.textContent = new URL(download.url).hostname; } catch { host.textContent = 'Enlace oficial'; }
+    const link = document.createElement('a');
+    link.className = 'button primary';
+    link.href = download.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = download.buttonLabel;
+    footer.append(host, link);
+    card.append(header, description, footer);
+    return card;
+  }));
 }
 
 function applyPermissions() {
   $$('[data-permission]').forEach((element) => {
     element.classList.toggle('hidden', !state.permissions.includes(element.dataset.permission));
   });
+  for (const pageName of permissionPages) {
+    $(`#page-${pageName}`).classList.toggle('hidden', !state.permissions.includes(pageName));
+  }
+  const activePage = $('.page.active');
+  if (activePage?.classList.contains('hidden')) activateDashboardPage('overview');
 }
 
-async function loadOverview() {
+async function loadOverview(authGeneration = null) {
+  if (authGeneration !== null && state.authGeneration !== authGeneration) return false;
   const data = await api('/api/overview');
+  if (authGeneration !== null && state.authGeneration !== authGeneration) return false;
   state.permissions = data.permissions;
   applyPermissions();
   $('#stat-antiraid').textContent = data.stats.antiRaidEnabled === null
@@ -115,6 +286,7 @@ async function loadOverview() {
   }
   $('#stat-members').textContent = Number(data.guild.members).toLocaleString('es-ES');
   $('#stat-guild').textContent = data.guild.name;
+  $('#stat-clients').textContent = data.stats.clients ?? '—';
   $('#stat-users').textContent = data.stats.dashboardUsers ?? '—';
   $('#hero-description').textContent = data.bot.ready
     ? `${data.guild.name} está conectado y protegido.`
@@ -131,6 +303,7 @@ async function loadOverview() {
   $('#sidebar-status').textContent = ready ? 'En línea' : 'Conectando';
   $('#sidebar-status-dot').classList.toggle('offline', !ready);
   renderAudit(data.audit);
+  return true;
 }
 
 function renderAudit(entries) {
@@ -154,10 +327,13 @@ function renderAudit(entries) {
 }
 
 async function openPage(name) {
-  $$('.page').forEach((page) => page.classList.remove('active'));
-  $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.page === name));
-  $(`#page-${name}`).classList.add('active');
-  $('#page-title').textContent = pages[name];
+  const page = $(`#page-${name}`);
+  const navigationItem = $(`.nav-item[data-page="${name}"]`);
+  if (!page || !navigationItem || navigationItem.classList.contains('hidden')) {
+    toast('No tienes acceso a esa sección.', 'error');
+    return;
+  }
+  activateDashboardPage(name);
   closeSidebar();
   try {
     if (name === 'overview') await loadOverview();
@@ -167,6 +343,7 @@ async function openPage(name) {
     if (name === 'tickets') await loadTickets();
     if (name === 'claimkey') await loadClaimKey();
     if (name === 'embeds') await loadEmbeds();
+    if (name === 'clients') await loadClientsAdmin();
     if (name === 'users') await loadUsers();
   } catch (error) { toast(error.message, 'error'); }
 }
@@ -1585,6 +1762,299 @@ async function loadEmbeds() {
   renderSavedEmbeds();
 }
 
+async function loadClientAccounts() {
+  const data = await api('/api/admin/clients');
+  state.clients = Array.isArray(data.clients) ? data.clients : [];
+  renderClientAccounts();
+  renderClientAdminStats();
+}
+
+async function loadClientPortalAdmin({ discardPortalChanges = false } = {}) {
+  const loadGeneration = ++state.clientPortalLoadGeneration;
+  const revisionAtStart = state.clientPortalRevision;
+  const data = await api('/api/admin/client-portal');
+  const changedDuringLoad = state.clientPortalRevision !== revisionAtStart;
+  const superseded = state.clientPortalLoadGeneration !== loadGeneration;
+  if (superseded || changedDuringLoad || (state.clientPortalDirty && !discardPortalChanges)) {
+    return false;
+  }
+  state.clientPortal = data.portal ?? { downloads: [] };
+  state.clientPortalDirty = false;
+  fillForm($('#client-portal-form'), state.clientPortal);
+  renderClientDownloadEditors(state.clientPortal.downloads ?? []);
+  $('#client-portal-save-state').textContent = '';
+  renderClientAdminStats();
+  return true;
+}
+
+async function loadClientsAdmin({ discardPortalChanges = false } = {}) {
+  if (state.clientPortalSaving) {
+    await loadClientAccounts();
+    return false;
+  }
+  if (state.clientPortalDirty && !discardPortalChanges) {
+    await loadClientAccounts();
+    return false;
+  }
+  const [, portalLoaded] = await Promise.all([
+    loadClientAccounts(),
+    loadClientPortalAdmin({ discardPortalChanges }),
+  ]);
+  return portalLoaded;
+}
+
+function markClientPortalDirty() {
+  state.clientPortalRevision += 1;
+  state.clientPortalDirty = true;
+  $('#client-portal-save-state').textContent = 'Cambios sin guardar';
+}
+
+function renderClientAdminStats() {
+  $('#admin-client-total').textContent = state.clients.length;
+  $('#admin-client-active').textContent = state.clients.filter((clientAccount) => !clientAccount.disabled).length;
+  $('#stat-clients').textContent = state.clients.length;
+  const editors = $$('.client-download-editor', $('#client-download-editors'));
+  const visible = editors.length
+    ? editors.filter((editor) => $('[name="enabled"]', editor).checked).length
+    : (state.clientPortal.downloads ?? []).filter((download) => download.enabled).length;
+  $('#admin-download-active').textContent = visible;
+}
+
+function formatClientDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? 'Fecha no disponible'
+    : date.toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function createClientCard(clientAccount) {
+  const card = document.createElement('article');
+  card.className = `client-account-card${clientAccount.disabled ? ' disabled' : ''}`;
+  const header = document.createElement('div');
+  header.className = 'client-account-card-head';
+  const avatar = document.createElement('div');
+  avatar.className = 'mini-avatar';
+  avatar.textContent = clientAccount.username.slice(0, 1).toUpperCase();
+  const identity = document.createElement('div');
+  const title = document.createElement('h4');
+  title.textContent = clientAccount.displayName || clientAccount.username;
+  const username = document.createElement('p');
+  username.textContent = `@${clientAccount.username}`;
+  identity.append(title, username);
+  const badge = document.createElement('span');
+  badge.className = `badge ${clientAccount.disabled ? 'danger' : 'success'}`;
+  badge.textContent = clientAccount.disabled ? 'Desactivado' : 'Activo';
+  header.append(avatar, identity, badge);
+  const meta = document.createElement('div');
+  meta.className = 'client-account-meta';
+  const created = document.createElement('span');
+  created.textContent = `Creado: ${formatClientDate(clientAccount.createdAt)}`;
+  const updated = document.createElement('span');
+  updated.textContent = `Actualizado: ${formatClientDate(clientAccount.updatedAt)}`;
+  meta.append(created, updated);
+  const actions = document.createElement('div');
+  actions.className = 'client-account-actions';
+  const edit = document.createElement('button');
+  edit.type = 'button';
+  edit.className = 'button ghost';
+  edit.textContent = 'Editar acceso';
+  edit.addEventListener('click', () => openClientAccountDialog(clientAccount));
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'button danger';
+  remove.textContent = 'Eliminar';
+  remove.addEventListener('click', () => deleteClientAccount(clientAccount, remove));
+  actions.append(edit, remove);
+  card.append(header, meta, actions);
+  return card;
+}
+
+function renderClientAccounts() {
+  const grid = $('#clients-grid');
+  if (!state.clients.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'Todavía no hay cuentas de cliente.';
+    grid.replaceChildren(empty);
+    return;
+  }
+  grid.replaceChildren(...state.clients.map(createClientCard));
+}
+
+function openClientAccountDialog(clientAccount = null) {
+  const form = $('#client-account-form');
+  const dialog = $('#client-account-dialog');
+  const generation = ++state.clientAccountDialogGeneration;
+  dialog.dataset.generation = String(generation);
+  setButtonBusy(form.querySelector('[type="submit"]'), false);
+  form.reset();
+  $('#client-account-form-error').classList.add('hidden');
+  form.elements.id.value = clientAccount?.id ?? '';
+  form.elements.expectedUpdatedAt.value = clientAccount?.updatedAt ?? '';
+  form.elements.displayName.value = clientAccount?.displayName ?? '';
+  form.elements.username.value = clientAccount?.username ?? '';
+  form.elements.password.required = !clientAccount;
+  form.elements.disabled.checked = Boolean(clientAccount?.disabled);
+  $('#client-account-dialog-title').textContent = clientAccount ? 'Editar cliente' : 'Nuevo cliente';
+  $('#client-account-password-help').textContent = clientAccount
+    ? 'Déjala vacía para conservar la contraseña actual.'
+    : 'Obligatoria al crear. Mínimo 8 caracteres.';
+  dialog.showModal();
+}
+
+async function deleteClientAccount(clientAccount, button) {
+  if (!confirm(`¿Eliminar definitivamente el acceso de ${clientAccount.username}?`)) return;
+  setButtonBusy(button, true, 'Eliminando...');
+  try {
+    await api(`/api/admin/clients/${clientAccount.id}`, {
+      method: 'DELETE',
+      body: { expectedUpdatedAt: clientAccount.updatedAt },
+    });
+    toast('Cuenta de cliente eliminada.');
+    await loadClientAccounts();
+  } catch (error) {
+    toast(error.message, 'error');
+    setButtonBusy(button, false);
+  }
+}
+
+function createClientEditorField(labelText, name, value, options = {}) {
+  const label = document.createElement('label');
+  label.className = `field${options.wide ? ' client-download-field-wide' : ''}`;
+  const text = document.createElement('span');
+  text.textContent = labelText;
+  const input = options.rows ? document.createElement('textarea') : document.createElement('input');
+  input.name = name;
+  if (!options.rows) input.type = options.type ?? 'text';
+  if (options.rows) input.rows = options.rows;
+  if (options.maxLength) input.maxLength = options.maxLength;
+  if (options.placeholder) input.placeholder = options.placeholder;
+  input.required = options.required !== false;
+  input.value = value ?? '';
+  label.append(text, input);
+  return label;
+}
+
+function updateClientDownloadEditorOrder() {
+  const container = $('#client-download-editors');
+  const editors = $$('.client-download-editor', container);
+  editors.forEach((editor, index) => {
+    $('.client-download-editor-title', editor).textContent = `Descarga ${String(index + 1).padStart(2, '0')}`;
+    $('[data-download-move="up"]', editor).disabled = index === 0;
+    $('[data-download-move="down"]', editor).disabled = index === editors.length - 1;
+  });
+  $('#client-download-count').textContent = `${editors.length} / 20`;
+  renderClientAdminStats();
+}
+
+function createClientDownloadEditor(download, index) {
+  const editor = document.createElement('article');
+  editor.className = 'client-download-editor';
+  editor.dataset.downloadId = download.id || crypto.randomUUID();
+  const header = document.createElement('div');
+  header.className = 'client-download-editor-head';
+  const heading = document.createElement('div');
+  const eyebrow = document.createElement('span');
+  eyebrow.className = 'eyebrow';
+  eyebrow.textContent = 'ENLACE DEL PORTAL';
+  const title = document.createElement('h4');
+  title.className = 'client-download-editor-title';
+  title.textContent = `Descarga ${String(index + 1).padStart(2, '0')}`;
+  heading.append(eyebrow, title);
+  const controls = document.createElement('div');
+  controls.className = 'client-download-editor-controls';
+  const enabledLabel = document.createElement('label');
+  enabledLabel.className = 'client-download-enabled';
+  const enabled = document.createElement('input');
+  enabled.type = 'checkbox';
+  enabled.name = 'enabled';
+  enabled.checked = download.enabled !== false;
+  const enabledText = document.createElement('span');
+  enabledText.textContent = 'Visible';
+  enabledLabel.append(enabled, enabledText);
+  enabled.addEventListener('change', renderClientAdminStats);
+  const up = document.createElement('button');
+  up.type = 'button';
+  up.className = 'icon-button';
+  up.dataset.downloadMove = 'up';
+  up.setAttribute('aria-label', 'Subir descarga');
+  up.textContent = '↑';
+  up.addEventListener('click', () => {
+    const previous = editor.previousElementSibling;
+    if (!previous) return;
+    editor.parentElement.insertBefore(editor, previous);
+    updateClientDownloadEditorOrder();
+    markClientPortalDirty();
+  });
+  const down = document.createElement('button');
+  down.type = 'button';
+  down.className = 'icon-button';
+  down.dataset.downloadMove = 'down';
+  down.setAttribute('aria-label', 'Bajar descarga');
+  down.textContent = '↓';
+  down.addEventListener('click', () => {
+    const next = editor.nextElementSibling;
+    if (!next) return;
+    editor.parentElement.insertBefore(next, editor);
+    updateClientDownloadEditorOrder();
+    markClientPortalDirty();
+  });
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'button danger compact';
+  remove.textContent = 'Quitar';
+  remove.addEventListener('click', () => {
+    editor.remove();
+    updateClientDownloadEditorOrder();
+    markClientPortalDirty();
+  });
+  controls.append(enabledLabel, up, down, remove);
+  header.append(heading, controls);
+  const fields = document.createElement('div');
+  fields.className = 'client-download-fields';
+  fields.append(
+    createClientEditorField('Nombre', 'name', download.name, { maxLength: 80 }),
+    createClientEditorField('Versión', 'version', download.version || 'Actual', { maxLength: 40 }),
+    createClientEditorField('Texto del botón', 'buttonLabel', download.buttonLabel || 'Descargar', { maxLength: 80 }),
+    createClientEditorField('Enlace HTTPS', 'url', download.url, { type: 'url', maxLength: 2048 }),
+    createClientEditorField('Descripción', 'description', download.description, { rows: 3, maxLength: 500, wide: true }),
+  );
+  editor.append(header, fields);
+  return editor;
+}
+
+function renderClientDownloadEditors(downloads) {
+  const container = $('#client-download-editors');
+  if (!downloads.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'No hay descargas. Añade la primera para publicarla.';
+    container.replaceChildren(empty);
+  } else {
+    container.replaceChildren(...downloads.map(createClientDownloadEditor));
+  }
+  updateClientDownloadEditorOrder();
+}
+
+function clientPortalPayload() {
+  const form = $('#client-portal-form');
+  return {
+    title: form.elements.title.value.trim(),
+    description: form.elements.description.value.trim(),
+    notice: form.elements.notice.value.trim(),
+    expectedUpdatedAt: state.clientPortal.updatedAt,
+    downloads: $$('.client-download-editor', $('#client-download-editors')).map((editor) => ({
+      id: editor.dataset.downloadId,
+      name: editor.querySelector('[name="name"]').value.trim(),
+      version: editor.querySelector('[name="version"]').value.trim(),
+      description: editor.querySelector('[name="description"]').value.trim(),
+      buttonLabel: editor.querySelector('[name="buttonLabel"]').value.trim(),
+      url: editor.querySelector('[name="url"]').value.trim(),
+      enabled: editor.querySelector('[name="enabled"]').checked,
+    })),
+  };
+}
+
 async function loadUsers() {
   const data = await api('/api/users');
   state.users = data.users;
@@ -1626,7 +2096,12 @@ function createUserCard(user) {
 }
 
 function openUserDialog(user = null) {
-  const form = $('#user-form'); form.reset();
+  const form = $('#user-form');
+  const dialog = $('#user-dialog');
+  const generation = ++state.userDialogGeneration;
+  dialog.dataset.generation = String(generation);
+  setButtonBusy(form.querySelector('[type="submit"]'), false);
+  form.reset();
   $('#user-form-error').classList.add('hidden');
   form.elements.id.value = user?.id || '';
   form.elements.username.value = user?.username || '';
@@ -1642,7 +2117,7 @@ function openUserDialog(user = null) {
   $('.admin-check').classList.toggle('hidden', !state.user.isAdmin);
   if (!state.user.isAdmin) form.elements.isAdmin.checked = false;
   togglePermissionFields();
-  $('#user-dialog').showModal();
+  dialog.showModal();
 }
 
 function togglePermissionFields() {
@@ -1661,17 +2136,42 @@ async function deleteUser(user) {
 function openSidebar() { $('#sidebar').classList.add('open'); $('#sidebar-backdrop').classList.remove('hidden'); }
 function closeSidebar() { $('#sidebar').classList.remove('open'); $('#sidebar-backdrop').classList.add('hidden'); }
 
+async function logoutCurrentSession(event) {
+  const button = event?.currentTarget;
+  setButtonBusy(button, true, 'Cerrando...');
+  try {
+    await api('/api/auth/logout', { method: 'POST' });
+    state.authGeneration += 1;
+    state.clientPortalDirty = false;
+    window.location.replace('/');
+  } catch (error) {
+    toast(`No se pudo cerrar la sesión: ${error.message}`, 'error');
+    setButtonBusy(button, false);
+  }
+}
+
 $('#login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const form = event.currentTarget;
+  const authGeneration = ++state.authGeneration;
   const button = $('#login-submit'); const errorBox = $('#login-error');
   errorBox.classList.add('hidden'); setButtonBusy(button, true, 'Verificando...');
   try {
-    const data = await api('/api/auth/login', { method: 'POST', body: formObject(event.currentTarget) });
-    await showDashboard(data);
+    const body = formObject(form);
+    form.elements.password.value = '';
+    const data = await api('/api/auth/login', { method: 'POST', body });
+    if (state.authGeneration !== authGeneration) return;
+    const shown = await showAuthenticated(data, authGeneration);
+    if (!shown || state.authGeneration !== authGeneration) return;
+    form.reset();
   } catch (error) {
-    errorBox.textContent = error.message;
-    errorBox.classList.remove('hidden');
-  } finally { setButtonBusy(button, false); }
+    if (state.authGeneration === authGeneration) {
+      errorBox.textContent = error.message;
+      errorBox.classList.remove('hidden');
+    }
+  } finally {
+    if (state.authGeneration === authGeneration) setButtonBusy(button, false);
+  }
 });
 
 $$('[data-toggle-password]').forEach((button) => button.addEventListener('click', () => {
@@ -1683,11 +2183,8 @@ $$('.nav-item').forEach((button) => button.addEventListener('click', () => openP
 $$('[data-refresh="overview"]').forEach((button) => button.addEventListener('click', () => loadOverview().catch((error) => toast(error.message, 'error'))));
 $('#menu-button').addEventListener('click', openSidebar);
 $('#sidebar-backdrop').addEventListener('click', closeSidebar);
-
-$('#logout-button').addEventListener('click', async () => {
-  try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* La sesión local se cierra igualmente. */ }
-  showLogin();
-});
+$('#logout-button').addEventListener('click', logoutCurrentSession);
+$('#client-logout-button').addEventListener('click', logoutCurrentSession);
 
 $('#antiraid-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -1952,12 +2449,186 @@ $('#embed-form').addEventListener('submit', async (event) => {
 });
 $('#refresh-embeds').addEventListener('click', () => loadEmbeds().then(() => toast('Embeds actualizados.')).catch((error) => toast(error.message, 'error')));
 
+$('#new-client-button').addEventListener('click', () => openClientAccountDialog());
+$('#refresh-clients').addEventListener('click', async (event) => {
+  if (state.clientPortalDirty && !confirm('Hay cambios sin guardar en el catálogo. ¿Descartarlos y recargar?')) return;
+  const button = event.currentTarget;
+  setButtonBusy(button, true, 'Actualizando...');
+  try {
+    const portalLoaded = await loadClientsAdmin({ discardPortalChanges: true });
+    toast(portalLoaded
+      ? 'Clientes y catálogo actualizados.'
+      : 'Clientes actualizados; conservamos los cambios hechos durante la recarga.');
+  } catch (error) { toast(error.message, 'error'); }
+  finally { setButtonBusy(button, false); }
+});
+function invalidateClientAccountDialog() {
+  state.clientAccountDialogGeneration += 1;
+  $('#client-account-form').elements.password.value = '';
+}
+
+function closeClientAccountDialog() {
+  invalidateClientAccountDialog();
+  $('#client-account-dialog').close();
+}
+
+$$('.client-modal-close, .client-modal-cancel').forEach((button) => {
+  button.addEventListener('click', closeClientAccountDialog);
+});
+$('#client-account-dialog').addEventListener('cancel', invalidateClientAccountDialog);
+$('#client-account-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const dialog = $('#client-account-dialog');
+  const generation = Number(dialog.dataset.generation);
+  const id = form.elements.id.value;
+  const body = {
+    displayName: form.elements.displayName.value.trim(),
+    username: form.elements.username.value.trim(),
+    password: form.elements.password.value || undefined,
+    disabled: form.elements.disabled.checked,
+    ...(id ? { expectedUpdatedAt: form.elements.expectedUpdatedAt.value } : {}),
+  };
+  form.elements.password.value = '';
+  const errorBox = $('#client-account-form-error');
+  errorBox.classList.add('hidden');
+  const button = form.querySelector('[type="submit"]');
+  setButtonBusy(button, true, 'Guardando...');
+  try {
+    await api(id ? `/api/admin/clients/${id}` : '/api/admin/clients', {
+      method: id ? 'PATCH' : 'POST',
+      body,
+    });
+    const stillCurrent = state.clientAccountDialogGeneration === generation && dialog.open;
+    if (stillCurrent) {
+      setButtonBusy(button, false);
+      closeClientAccountDialog();
+      toast(id ? 'Acceso del cliente actualizado.' : 'Cuenta de cliente creada.');
+    }
+    await loadClientAccounts();
+  } catch (error) {
+    if (state.clientAccountDialogGeneration === generation && dialog.open) {
+      errorBox.textContent = error.message;
+      errorBox.classList.remove('hidden');
+    }
+  } finally {
+    if (state.clientAccountDialogGeneration === generation && dialog.open) {
+      setButtonBusy(button, false);
+    }
+  }
+});
+
+$('#add-client-download').addEventListener('click', () => {
+  const container = $('#client-download-editors');
+  const editors = $$('.client-download-editor', container);
+  if (editors.length >= 20) return toast('El catálogo admite un máximo de 20 descargas.', 'error');
+  const empty = $('.empty-state', container);
+  if (empty) empty.remove();
+  const editor = createClientDownloadEditor({
+    id: crypto.randomUUID(),
+    name: `Nueva descarga ${editors.length + 1}`,
+    version: 'Actual',
+    description: 'Descarga disponible para clientes autorizados.',
+    buttonLabel: 'Descargar',
+    url: '',
+    enabled: true,
+  }, editors.length);
+  container.append(editor);
+  updateClientDownloadEditorOrder();
+  markClientPortalDirty();
+  editor.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  editor.querySelector('[name="name"]').focus();
+});
+
+$('#client-portal-form').addEventListener('input', markClientPortalDirty);
+$('#client-portal-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('[type="submit"]');
+  const revisionAtSubmit = state.clientPortalRevision;
+  const sessionGenerationAtSubmit = state.sessionGeneration;
+  const saveGeneration = ++state.clientPortalSaveGeneration;
+  state.clientPortalSaving = true;
+  state.clientPortalLoadGeneration += 1;
+  setButtonBusy(button, true, 'Publicando...');
+  try {
+    const result = await api('/api/admin/client-portal', {
+      method: 'PATCH',
+      body: clientPortalPayload(),
+    });
+    if (
+      state.sessionGeneration !== sessionGenerationAtSubmit
+      || state.clientPortalSaveGeneration !== saveGeneration
+    ) return;
+    state.clientPortal = result.portal;
+    if (state.clientPortalRevision === revisionAtSubmit) {
+      state.clientPortalDirty = false;
+      fillForm(form, result.portal);
+      renderClientDownloadEditors(result.portal.downloads ?? []);
+      $('#client-portal-save-state').textContent = 'Catálogo publicado para los clientes';
+      toast('Centro de descargas actualizado.');
+    } else {
+      state.clientPortalDirty = true;
+      renderClientAdminStats();
+      $('#client-portal-save-state').textContent = 'Catálogo publicado; quedan cambios nuevos sin guardar';
+      toast('Catálogo publicado. Conservamos los cambios hechos durante el guardado.');
+    }
+  } catch (error) { toast(error.message, 'error'); }
+  finally {
+    if (state.clientPortalSaveGeneration === saveGeneration) {
+      state.clientPortalSaving = false;
+      setButtonBusy(button, false);
+    }
+  }
+});
+
+$('#client-password-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (form.elements.newPassword.value !== form.elements.confirmPassword.value) {
+    form.reset();
+    return toast('Las contraseñas nuevas no coinciden.', 'error');
+  }
+  const body = {
+    currentPassword: form.elements.currentPassword.value,
+    newPassword: form.elements.newPassword.value,
+  };
+  form.reset();
+  const button = form.querySelector('[type="submit"]');
+  setButtonBusy(button, true, 'Actualizando...');
+  try {
+    const result = await api('/api/client/password', {
+      method: 'POST',
+      body,
+    });
+    state.csrf = result.csrf;
+    toast('Contraseña actualizada y otras sesiones cerradas.');
+  } catch (error) { toast(error.message, 'error'); }
+  finally { setButtonBusy(button, false); }
+});
+
 $('#new-user-button').addEventListener('click', () => openUserDialog());
-$$('.modal-close, .modal-cancel').forEach((button) => button.addEventListener('click', () => $('#user-dialog').close()));
+function invalidateUserDialog() {
+  state.userDialogGeneration += 1;
+  $('#user-form').elements.password.value = '';
+}
+
+function closeUserDialog() {
+  invalidateUserDialog();
+  $('#user-dialog').close();
+}
+
+$$('.modal-close, .modal-cancel').forEach((button) => {
+  button.addEventListener('click', closeUserDialog);
+});
+$('#user-dialog').addEventListener('cancel', invalidateUserDialog);
 $('#user-form [name="isAdmin"]').addEventListener('change', togglePermissionFields);
 $('#user-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  const form = event.currentTarget; const id = form.elements.id.value;
+  const form = event.currentTarget;
+  const dialog = $('#user-dialog');
+  const generation = Number(dialog.dataset.generation);
+  const id = form.elements.id.value;
   const body = {
     username: form.elements.username.value,
     password: form.elements.password.value || undefined,
@@ -1965,38 +2636,70 @@ $('#user-form').addEventListener('submit', async (event) => {
     disabled: form.elements.disabled.checked,
     permissions: [...form.querySelectorAll('[name="permissions"]:checked')].map((item) => item.value),
   };
-  const errorBox = $('#user-form-error'); errorBox.classList.add('hidden');
-  const button = form.querySelector('[type="submit"]'); setButtonBusy(button, true, 'Guardando...');
+  form.elements.password.value = '';
+  const errorBox = $('#user-form-error');
+  errorBox.classList.add('hidden');
+  const button = form.querySelector('[type="submit"]');
+  setButtonBusy(button, true, 'Guardando...');
   try {
     await api(id ? `/api/users/${id}` : '/api/users', { method: id ? 'PATCH' : 'POST', body });
-    $('#user-dialog').close();
-    toast(id ? 'Usuario actualizado.' : 'Usuario creado.');
+    const stillCurrent = state.userDialogGeneration === generation && dialog.open;
+    if (stillCurrent) {
+      setButtonBusy(button, false);
+      closeUserDialog();
+      toast(id ? 'Usuario actualizado.' : 'Usuario creado.');
+    }
     await loadUsers();
   } catch (error) {
-    errorBox.textContent = error.message;
-    errorBox.classList.remove('hidden');
-  } finally { setButtonBusy(button, false); }
+    if (state.userDialogGeneration === generation && dialog.open) {
+      errorBox.textContent = error.message;
+      errorBox.classList.remove('hidden');
+    }
+  } finally {
+    if (state.userDialogGeneration === generation && dialog.open) {
+      setButtonBusy(button, false);
+    }
+  }
 });
 
 $('#password-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
-  if (form.elements.newPassword.value !== form.elements.confirmPassword.value) return toast('Las contraseñas nuevas no coinciden.', 'error');
+  if (form.elements.newPassword.value !== form.elements.confirmPassword.value) {
+    form.reset();
+    return toast('Las contraseñas nuevas no coinciden.', 'error');
+  }
+  const body = {
+    currentPassword: form.elements.currentPassword.value,
+    newPassword: form.elements.newPassword.value,
+  };
+  form.reset();
   const button = form.querySelector('[type="submit"]'); setButtonBusy(button, true, 'Actualizando...');
   try {
     const result = await api('/api/account/password', {
       method: 'POST',
-      body: { currentPassword: form.elements.currentPassword.value, newPassword: form.elements.newPassword.value },
+      body,
     });
     state.csrf = result.csrf;
-    form.reset();
     toast('Contraseña actualizada y otras sesiones cerradas.');
   } catch (error) { toast(error.message, 'error'); }
   finally { setButtonBusy(button, false); }
 });
 
+window.addEventListener('beforeunload', (event) => {
+  if (!state.clientPortalDirty) return;
+  event.preventDefault();
+  event.returnValue = '';
+});
+
 resetEmbedForm();
 (async () => {
-  try { await showDashboard(await api('/api/auth/session')); }
-  catch { showLogin(); }
+  const authGeneration = ++state.authGeneration;
+  try {
+    const session = await api('/api/auth/session');
+    if (state.authGeneration !== authGeneration) return;
+    await showAuthenticated(session, authGeneration);
+  } catch {
+    if (state.authGeneration === authGeneration) showLogin();
+  }
 })();

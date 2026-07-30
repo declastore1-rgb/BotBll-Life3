@@ -8,6 +8,7 @@ import {
   clearSessionCookie,
   createSession,
   readCookie,
+  safeTokenEqual,
   sessionCookie,
   verifyPassword,
   verifySession,
@@ -15,7 +16,7 @@ import {
 import { config } from './config.js';
 import { buildClaimKeyPanel, syncClaimKeyPublishedPanels } from './claimKey.js';
 import { buildCustomEmbed } from './embeds.js';
-import { can, dashboardPermissions, toPublicUser } from './store.js';
+import { can, dashboardPermissions, toPublicClient, toPublicUser } from './store.js';
 import {
   buildPanel,
   syncOpenTicketPermissions,
@@ -24,8 +25,22 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, '..', 'public');
-const DASHBOARD_VERSION = 'claim-key-20260729-4';
+const DASHBOARD_VERSION = 'client-portal-20260729-9';
 const loginAttempts = new Map();
+const passwordChangeAttempts = new Map();
+const passwordChangeInFlight = new Map();
+const LOGIN_WINDOW_MS = 15 * 60_000;
+const LOGIN_MAX_IP_ATTEMPTS = 30;
+const LOGIN_MAX_IDENTITY_ATTEMPTS = 8;
+const LOGIN_ATTEMPT_MAX_KEYS = 5_000;
+const PASSWORD_CHANGE_WINDOW_MS = 15 * 60_000;
+const PASSWORD_CHANGE_MAX_IP_ATTEMPTS = 30;
+const PASSWORD_CHANGE_MAX_PRINCIPAL_ATTEMPTS = 8;
+const PASSWORD_CHANGE_MAX_IP_IN_FLIGHT = 6;
+const PASSWORD_CHANGE_MAX_PRINCIPAL_IN_FLIGHT = 1;
+const PASSWORD_CHANGE_MAX_KEYS = 5_000;
+const DUMMY_PASSWORD_SALT = 'bll-login-timing-salt-v1';
+const DUMMY_PASSWORD_HASH = '0'.repeat(128);
 const SNOWFLAKE = /^\d{17,20}$/;
 const HEX_COLOR = /^#[0-9A-F]{6}$/i;
 const BUTTON_STYLES = new Set(['primary', 'secondary', 'success', 'danger']);
@@ -485,41 +500,246 @@ function sanitizeSavedEmbed(body, current = {}) {
   return value;
 }
 
-function rateLimitLogin(request, response, next) {
-  const key = request.ip;
-  const now = Date.now();
-  const current = loginAttempts.get(key);
-  if (!current || current.resetAt <= now) {
-    loginAttempts.set(key, { count: 0, resetAt: now + 15 * 60_000 });
-    return next();
+function cleanClientUsername(value, fallback) {
+  if (value === undefined) return fallback;
+  if (typeof value !== 'string' || !/^[a-zA-Z0-9_.-]{3,32}$/.test(value.trim())) {
+    throw new Error('El usuario debe tener entre 3 y 32 caracteres válidos.');
   }
-  if (current.count >= 8) {
-    response.set('Retry-After', String(Math.ceil((current.resetAt - now) / 1_000)));
+  return value.trim();
+}
+
+function sanitizeClientAccount(body, current = null) {
+  const username = cleanClientUsername(body.username, current?.username);
+  const displayName = cleanText(body.displayName, current?.displayName ?? username, 80);
+  const disabled = body.disabled === undefined
+    ? Boolean(current?.disabled)
+    : cleanBoolean(body.disabled, false, 'disabled');
+  let password;
+  if (body.password !== undefined && body.password !== '') {
+    if (typeof body.password !== 'string' || body.password.length < 8 || body.password.length > 128) {
+      throw new Error('La contraseña debe tener entre 8 y 128 caracteres.');
+    }
+    password = body.password;
+  } else if (!current) {
+    throw new Error('La contraseña del cliente es obligatoria.');
+  }
+  return { username, displayName, disabled, ...(password ? { password } : {}) };
+}
+
+function sanitizeClientPortal(body, current) {
+  const downloadsSource = body.downloads === undefined ? current.downloads : body.downloads;
+  if (!Array.isArray(downloadsSource) || downloadsSource.length > 20) {
+    throw new Error('El catálogo debe contener entre 0 y 20 descargas.');
+  }
+  const ids = new Set();
+  const downloads = downloadsSource.map((download, index) => {
+    if (!download || typeof download !== 'object') throw new Error(`La descarga ${index + 1} no es válida.`);
+    const rawId = typeof download.id === 'string' ? download.id : '';
+    const id = /^[a-zA-Z0-9_-]{1,36}$/.test(rawId) ? rawId : randomUUID();
+    if (ids.has(id)) throw new Error('Dos descargas no pueden tener el mismo ID.');
+    ids.add(id);
+    const previous = current.downloads.find((item) => item.id === id);
+    return {
+      id,
+      name: cleanText(download.name, previous?.name ?? `Descarga ${index + 1}`, 80),
+      version: cleanText(download.version, previous?.version ?? 'Actual', 40),
+      description: cleanText(
+        download.description,
+        previous?.description ?? 'Descarga disponible para clientes autorizados.',
+        500,
+      ),
+      buttonLabel: cleanText(download.buttonLabel, previous?.buttonLabel ?? 'Descargar', 80),
+      url: cleanPublicUrl(download.url, previous?.url),
+      enabled: download.enabled === undefined
+        ? previous?.enabled !== false
+        : cleanBoolean(download.enabled, true, 'enabled'),
+      updatedAt: new Date().toISOString(),
+    };
+  });
+  return {
+    title: cleanText(body.title, current.title, 120),
+    description: cleanText(body.description, current.description, 1_000),
+    notice: cleanText(body.notice, current.notice, 500),
+    downloads,
+  };
+}
+
+function pruneLoginAttempts(now = Date.now()) {
+  for (const [key, attempt] of loginAttempts) {
+    if (attempt.resetAt <= now) loginAttempts.delete(key);
+  }
+  while (loginAttempts.size > LOGIN_ATTEMPT_MAX_KEYS) {
+    loginAttempts.delete(loginAttempts.keys().next().value);
+  }
+}
+
+function loginRateLimitKeys(request) {
+  const usernameInput = typeof request.body?.username === 'string' ? request.body.username.trim() : '';
+  const username = /^[a-zA-Z0-9_.-]{3,32}$/.test(usernameInput)
+    ? usernameInput.toLocaleLowerCase('en-US')
+    : '';
+  return {
+    ip: `ip:${request.ip}`,
+    identity: `identity:${username || '<invalid>'}`,
+  };
+}
+
+function rateLimitLogin(request, response, next) {
+  const now = Date.now();
+  pruneLoginAttempts(now);
+  const keys = loginRateLimitKeys(request);
+  const budgets = [
+    { key: keys.ip, limit: LOGIN_MAX_IP_ATTEMPTS },
+    { key: keys.identity, limit: LOGIN_MAX_IDENTITY_ATTEMPTS },
+  ];
+  let retryAfter = 0;
+  for (const budget of budgets) {
+    const current = loginAttempts.get(budget.key);
+    if (current && current.resetAt > now && current.count >= budget.limit) {
+      retryAfter = Math.max(retryAfter, Math.ceil((current.resetAt - now) / 1_000));
+    }
+  }
+  if (retryAfter > 0) {
+    response.set('Retry-After', String(retryAfter));
     return response.status(429).json({ error: 'Demasiados intentos. Espera unos minutos.' });
   }
+  for (const budget of budgets) {
+    const current = loginAttempts.get(budget.key);
+    const attempt = !current || current.resetAt <= now
+      ? { count: 0, resetAt: now + LOGIN_WINDOW_MS }
+      : current;
+    attempt.count += 1;
+    loginAttempts.delete(budget.key);
+    loginAttempts.set(budget.key, attempt);
+  }
+  request.loginIdentityAttemptKey = keys.identity;
+  pruneLoginAttempts(now);
   return next();
 }
 
-function registerFailedLogin(ip) {
+function prunePasswordChangeAttempts(now = Date.now()) {
+  for (const [key, attempt] of passwordChangeAttempts) {
+    if (attempt.resetAt <= now) passwordChangeAttempts.delete(key);
+  }
+  while (passwordChangeAttempts.size > PASSWORD_CHANGE_MAX_KEYS) {
+    passwordChangeAttempts.delete(passwordChangeAttempts.keys().next().value);
+  }
+}
+
+function decrementPasswordChangeInFlight(key) {
+  const count = passwordChangeInFlight.get(key) ?? 0;
+  if (count <= 1) passwordChangeInFlight.delete(key);
+  else passwordChangeInFlight.set(key, count - 1);
+}
+
+function rateLimitPasswordChange(request, response, next) {
+  const principal = request.dashboardAuth?.principal;
+  const principalType = request.dashboardAuth?.principalType;
+  if (!principal?.id || !principalType) {
+    return response.status(401).json({ error: 'Sesión no válida.' });
+  }
+
   const now = Date.now();
-  const current = loginAttempts.get(ip) ?? { count: 0, resetAt: now + 15 * 60_000 };
-  current.count += 1;
-  loginAttempts.set(ip, current);
+  prunePasswordChangeAttempts(now);
+  const keys = {
+    ip: `ip:${request.ip}`,
+    principal: `principal:${principalType}:${principal.id}`,
+  };
+  const budgets = [
+    { key: keys.ip, limit: PASSWORD_CHANGE_MAX_IP_ATTEMPTS },
+    { key: keys.principal, limit: PASSWORD_CHANGE_MAX_PRINCIPAL_ATTEMPTS },
+  ];
+  const concurrentBudgets = [
+    { key: keys.ip, limit: PASSWORD_CHANGE_MAX_IP_IN_FLIGHT },
+    { key: keys.principal, limit: PASSWORD_CHANGE_MAX_PRINCIPAL_IN_FLIGHT },
+  ];
+
+  let retryAfter = 0;
+  for (const budget of budgets) {
+    const current = passwordChangeAttempts.get(budget.key);
+    if (current && current.resetAt > now && current.count >= budget.limit) {
+      retryAfter = Math.max(retryAfter, Math.ceil((current.resetAt - now) / 1_000));
+    }
+  }
+  const concurrencyExceeded = concurrentBudgets.some(
+    (budget) => (passwordChangeInFlight.get(budget.key) ?? 0) >= budget.limit,
+  );
+  if (retryAfter > 0 || concurrencyExceeded) {
+    response.set('Retry-After', String(retryAfter || 1));
+    return response.status(429).json({ error: 'Demasiados intentos. Espera unos minutos.' });
+  }
+
+  for (const budget of budgets) {
+    const current = passwordChangeAttempts.get(budget.key);
+    const attempt = !current || current.resetAt <= now
+      ? { count: 0, resetAt: now + PASSWORD_CHANGE_WINDOW_MS }
+      : current;
+    attempt.count += 1;
+    passwordChangeAttempts.delete(budget.key);
+    passwordChangeAttempts.set(budget.key, attempt);
+  }
+  for (const budget of concurrentBudgets) {
+    passwordChangeInFlight.set(budget.key, (passwordChangeInFlight.get(budget.key) ?? 0) + 1);
+  }
+
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    for (const budget of concurrentBudgets) decrementPasswordChangeInFlight(budget.key);
+  };
+  request.releasePasswordChangeLimit = release;
+  response.once('finish', release);
+  return next();
 }
 
 export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) {
   const app = express();
   app.disable('x-powered-by');
   app.disable('etag');
-  app.set('trust proxy', 1);
+  const trustProxySetting = process.env.TRUST_PROXY?.trim().toLowerCase();
+  const trustProxy = trustProxySetting === 'true'
+    ? 1
+    : trustProxySetting === 'false'
+      ? false
+      : process.env.RAILWAY_ENVIRONMENT ? 1 : false;
+  app.set('trust proxy', trustProxy);
+  const publicOriginSetting = process.env.DASHBOARD_PUBLIC_ORIGIN?.trim();
+  let dashboardPublicOrigin = null;
+  if (publicOriginSetting) {
+    let parsedOrigin;
+    try {
+      parsedOrigin = new URL(publicOriginSetting);
+    } catch {
+      throw new Error('DASHBOARD_PUBLIC_ORIGIN debe ser un origen HTTP o HTTPS válido.');
+    }
+    if (
+      !['http:', 'https:'].includes(parsedOrigin.protocol)
+      || parsedOrigin.username
+      || parsedOrigin.password
+      || parsedOrigin.pathname !== '/'
+      || parsedOrigin.search
+      || parsedOrigin.hash
+    ) {
+      throw new Error('DASHBOARD_PUBLIC_ORIGIN debe contener solo protocolo y dominio.');
+    }
+    dashboardPublicOrigin = parsedOrigin.origin;
+  }
   app.use((_request, response, next) => {
     response.setHeader('X-Dashboard-Version', DASHBOARD_VERSION);
+    response.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+    response.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
     next();
   });
   app.use(helmet({
+    crossOriginEmbedderPolicy: false,
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
+        baseUri: ["'none'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
+        objectSrc: ["'none'"],
         scriptSrc: ["'self'"],
         styleSrc: ["'self'"],
         imgSrc: ["'self'", 'data:', 'https:'],
@@ -527,7 +747,12 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
       },
     },
   }));
-  app.use(express.json({ limit: '64kb' }));
+  app.use(express.json({ limit: '64kb', type: 'application/json' }));
+  app.use('/api', (_request, response, next) => {
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Pragma', 'no-cache');
+    next();
+  });
 
   let claimKeyControlQueue = Promise.resolve();
   const runClaimKeyControlOperation = (operation) => {
@@ -574,21 +799,44 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
 
   app.post('/api/auth/login', rateLimitLogin, async (request, response, next) => {
     try {
-      const username = typeof request.body?.username === 'string' ? request.body.username : '';
-      const password = typeof request.body?.password === 'string' ? request.body.password : '';
-      const user = store.getUserByUsername(username);
-      const valid = user && !user.disabled
-        ? await verifyPassword(password, user.passwordSalt, user.passwordHash)
-        : false;
+      const usernameInput = typeof request.body?.username === 'string' ? request.body.username.trim() : '';
+      const passwordInput = typeof request.body?.password === 'string' ? request.body.password : '';
+      const usernameAllowed = /^[a-zA-Z0-9_.-]{3,32}$/.test(usernameInput);
+      const passwordAllowed = passwordInput.length >= 1 && passwordInput.length <= 128;
+      const username = usernameAllowed ? usernameInput : '';
+      const password = passwordAllowed ? passwordInput : '';
+      const staff = store.getUserByUsername(username);
+      const clientAccount = staff ? null : store.getClientByUsername(username);
+      const principal = staff ?? clientAccount;
+      const principalType = staff ? 'staff' : clientAccount ? 'client' : null;
+      const passwordMatches = await verifyPassword(
+        password,
+        principal?.passwordSalt ?? DUMMY_PASSWORD_SALT,
+        principal?.passwordHash ?? DUMMY_PASSWORD_HASH,
+      );
+      const valid = Boolean(
+        usernameAllowed
+        && passwordAllowed
+        && principal
+        && !principal.disabled
+        && passwordMatches
+      );
       if (!valid) {
-        registerFailedLogin(request.ip);
         return response.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
       }
-      loginAttempts.delete(request.ip);
-      const token = createSession(user.id, config.sessionSecret, user.sessionVersion);
+      loginAttempts.delete(request.loginIdentityAttemptKey);
+      const token = createSession(
+        principal.id,
+        config.sessionSecret,
+        principal.sessionVersion,
+        principalType,
+      );
       const session = verifySession(token, config.sessionSecret);
+      const publicPrincipal = principalType === 'staff'
+        ? toPublicUser(principal)
+        : toPublicClient(principal);
       response.setHeader('Set-Cookie', sessionCookie(token, config.secureCookies));
-      return response.json({ user: toPublicUser(user), csrf: session.csrf });
+      return response.json({ user: publicPrincipal, csrf: session.csrf });
     } catch (error) {
       return next(error);
     }
@@ -596,52 +844,213 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
 
   const authenticate = (request, response, next) => {
     const session = verifySession(readCookie(request, 'bll_session'), config.sessionSecret);
-    const user = session ? store.getUserById(session.userId) : null;
+    const principal = session?.principalType === 'client'
+      ? store.getClientById(session.principalId)
+      : session?.principalType === 'staff'
+        ? store.getUserById(session.principalId)
+        : null;
     if (
       !session
-      || !user
-      || user.disabled
-      || session.sessionVersion !== user.sessionVersion
+      || !principal
+      || principal.disabled
+      || session.sessionVersion !== principal.sessionVersion
     ) return response.status(401).json({ error: 'Sesión no válida.' });
-    request.dashboardAuth = { session, user };
+    request.dashboardAuth = {
+      session,
+      principal,
+      principalType: session.principalType,
+      user: session.principalType === 'staff' ? principal : null,
+      client: session.principalType === 'client' ? principal : null,
+    };
+    return next();
+  };
+
+  const requireSameOrigin = (request, response, next) => {
+    const fetchSite = request.get('Sec-Fetch-Site');
+    if (fetchSite && !['same-origin', 'none'].includes(fetchSite)) {
+      return response.status(403).json({ error: 'Origen de solicitud no permitido.' });
+    }
+    const origin = request.get('Origin');
+    if (origin) {
+      try {
+        const parsedOrigin = new URL(origin);
+        const expectedHost = request.get('host')?.toLowerCase();
+        const allowed = dashboardPublicOrigin
+          ? parsedOrigin.origin === dashboardPublicOrigin
+          : ['http:', 'https:'].includes(parsedOrigin.protocol)
+            && Boolean(expectedHost)
+            && parsedOrigin.host.toLowerCase() === expectedHost;
+        if (!allowed) {
+          return response.status(403).json({ error: 'Origen de solicitud no permitido.' });
+        }
+      } catch {
+        return response.status(403).json({ error: 'Origen de solicitud no permitido.' });
+      }
+    }
     return next();
   };
 
   const requireCsrf = (request, response, next) => {
     if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) return next();
-    const token = request.get('X-CSRF-Token');
-    if (!token || token !== request.dashboardAuth.session.csrf) {
-      return response.status(403).json({ error: 'Token de seguridad inválido. Recarga la página.' });
+    return requireSameOrigin(request, response, () => {
+      const token = request.get('X-CSRF-Token');
+      if (!safeTokenEqual(token, request.dashboardAuth.session.csrf)) {
+        return response.status(403).json({ error: 'Token de seguridad inválido. Recarga la página.' });
+      }
+      return next();
+    });
+  };
+
+  const requireStaff = (request, response, next) => {
+    if (request.dashboardAuth.principalType !== 'staff') {
+      return response.status(403).json({ error: 'Esta sección es exclusiva del personal autorizado.' });
+    }
+    return next();
+  };
+
+  const requireClient = (request, response, next) => {
+    if (request.dashboardAuth.principalType !== 'client') {
+      return response.status(403).json({ error: 'Esta sección es exclusiva para clientes.' });
     }
     return next();
   };
 
   const requirePermission = (permission) => (request, response, next) => {
-    if (!can(request.dashboardAuth.user, permission)) {
+    if (request.dashboardAuth.principalType !== 'staff' || !can(request.dashboardAuth.user, permission)) {
       return response.status(403).json({ error: 'Tu usuario no tiene permiso para esta sección.' });
     }
     return next();
   };
 
   const requireAnyPermission = (...permissions) => (request, response, next) => {
-    if (!permissions.some((permission) => can(request.dashboardAuth.user, permission))) {
+    if (
+      request.dashboardAuth.principalType !== 'staff'
+      || !permissions.some((permission) => can(request.dashboardAuth.user, permission))
+    ) {
       return response.status(403).json({ error: 'Tu usuario no tiene permiso para este recurso.' });
     }
     return next();
   };
 
   app.get('/api/auth/session', authenticate, (request, response) => {
+    const principal = request.dashboardAuth.principalType === 'staff'
+      ? toPublicUser(request.dashboardAuth.user)
+      : toPublicClient(request.dashboardAuth.client);
     response.json({
-      user: toPublicUser(request.dashboardAuth.user),
+      user: principal,
       csrf: request.dashboardAuth.session.csrf,
     });
   });
 
-  app.use('/api', authenticate, requireCsrf);
-
-  app.post('/api/auth/logout', (_request, response) => {
+  app.post('/api/auth/logout', requireSameOrigin, (_request, response) => {
     response.setHeader('Set-Cookie', clearSessionCookie(config.secureCookies));
     response.json({ ok: true });
+  });
+
+  app.use('/api', authenticate, requireCsrf);
+
+  app.get('/api/client/downloads', requireClient, (request, response) => {
+    response.json({
+      client: toPublicClient(request.dashboardAuth.client),
+      portal: store.getClientPortal(config.guildId, false),
+    });
+  });
+
+  app.post('/api/client/password', requireClient, rateLimitPasswordChange, async (request, response, next) => {
+    try {
+      const clientAccount = request.dashboardAuth.client;
+      const currentPassword = typeof request.body?.currentPassword === 'string'
+        ? request.body.currentPassword
+        : '';
+      if (currentPassword.length < 1 || currentPassword.length > 128) {
+        return response.status(400).json({ error: 'La contraseña actual no es correcta.' });
+      }
+      const valid = await verifyPassword(
+        currentPassword,
+        clientAccount.passwordSalt,
+        clientAccount.passwordHash,
+      );
+      if (!valid) return response.status(400).json({ error: 'La contraseña actual no es correcta.' });
+      const sessionVersion = await store.changeClientPassword(
+        clientAccount.id,
+        request.body?.newPassword,
+        clientAccount,
+      );
+      const token = createSession(clientAccount.id, config.sessionSecret, sessionVersion, 'client');
+      const session = verifySession(token, config.sessionSecret);
+      response.setHeader('Set-Cookie', sessionCookie(token, config.secureCookies));
+      return response.json({ ok: true, csrf: session.csrf });
+    } catch (error) {
+      return next(error);
+    } finally {
+      request.releasePasswordChangeLimit?.();
+    }
+  });
+
+  app.use('/api', requireStaff);
+
+  app.get('/api/admin/clients', requirePermission('clients'), (_request, response) => {
+    response.json({ clients: store.listClients() });
+  });
+
+  app.post('/api/admin/clients', requirePermission('clients'), async (request, response, next) => {
+    try {
+      const input = sanitizeClientAccount(request.body ?? {});
+      const clientAccount = await store.createClient(input, request.dashboardAuth.user);
+      response.status(201).json({ client: clientAccount });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch('/api/admin/clients/:id', requirePermission('clients'), async (request, response, next) => {
+    try {
+      const current = store.getClientById(request.params.id);
+      if (!current) throw new Error('Cliente no encontrado.');
+      const input = sanitizeClientAccount(request.body ?? {}, current);
+      const clientAccount = await store.updateClient(
+        request.params.id,
+        input,
+        request.dashboardAuth.user,
+        request.body?.expectedUpdatedAt,
+      );
+      response.json({ client: clientAccount });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete('/api/admin/clients/:id', requirePermission('clients'), async (request, response, next) => {
+    try {
+      await store.deleteClient(
+        request.params.id,
+        request.dashboardAuth.user,
+        request.body?.expectedUpdatedAt,
+      );
+      response.json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/admin/client-portal', requirePermission('clients'), (_request, response) => {
+    response.json({ portal: store.getClientPortal(config.guildId, true) });
+  });
+
+  app.patch('/api/admin/client-portal', requirePermission('clients'), async (request, response, next) => {
+    try {
+      const current = store.getClientPortal(config.guildId, true);
+      const portal = sanitizeClientPortal(request.body ?? {}, current);
+      const updatedPortal = await store.updateClientPortal(
+        config.guildId,
+        portal,
+        request.dashboardAuth.user,
+        request.body?.expectedUpdatedAt,
+      );
+      response.json({ portal: updatedPortal });
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get('/api/overview', (request, response) => {
@@ -661,6 +1070,7 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
       if (entry.module === 'Tickets') return can(user, 'tickets');
       if (entry.module === 'Claim Key') return can(user, 'claimkey');
       if (entry.module === 'Embeds') return can(user, 'embeds');
+      if (entry.module === 'Clientes') return can(user, 'clients');
       return can(user, 'users');
     });
     response.json({
@@ -679,6 +1089,7 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
         openTickets: can(user, 'tickets') ? ticketCount : null,
         claimKeyAvailable: claimKeyStats?.available ?? null,
         claimKeyClaimed: claimKeyStats?.claimed ?? null,
+        clients: can(user, 'clients') ? store.listClients().length : null,
         dashboardUsers: can(user, 'users') ? store.listUsers().length : null,
       },
       permissions: dashboardPermissions.filter((permission) => can(user, permission)),
@@ -1096,10 +1507,13 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
     }
   });
 
-  app.post('/api/account/password', async (request, response, next) => {
+  app.post('/api/account/password', rateLimitPasswordChange, async (request, response, next) => {
     try {
       const user = request.dashboardAuth.user;
       const currentPassword = typeof request.body?.currentPassword === 'string' ? request.body.currentPassword : '';
+      if (currentPassword.length < 1 || currentPassword.length > 128) {
+        return response.status(400).json({ error: 'La contraseña actual no es correcta.' });
+      }
       const valid = await verifyPassword(currentPassword, user.passwordSalt, user.passwordHash);
       if (!valid) return response.status(400).json({ error: 'La contraseña actual no es correcta.' });
       const sessionVersion = await store.changeOwnPassword(
@@ -1113,6 +1527,8 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
       return response.json({ ok: true, csrf: session.csrf });
     } catch (error) {
       return next(error);
+    } finally {
+      request.releasePasswordChangeLimit?.();
     }
   });
 
@@ -1133,19 +1549,47 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
     response.sendFile(path.join(publicDir, 'index.html'), { cacheControl: false, lastModified: false });
   });
 
-  app.use((error, _request, response, _next) => {
-    const invalidJson = error.type === 'entity.parse.failed';
-    const safeMessage = invalidJson
-      ? 'La solicitud contiene JSON inválido.'
-      : error.message || 'Ocurrió un error inesperado.';
+  app.use((error, _request, response, next) => {
+    if (response.headersSent) return next(error);
+
+    const invalidJson = error?.type === 'entity.parse.failed';
+    const payloadTooLarge = error?.type === 'entity.too.large';
+    const missingAsset = error?.status === 404;
+    const rawMessage = typeof error?.message === 'string' ? error.message.trim() : '';
+    const clientConflict = error?.code === 'CLIENT_CONFLICT';
+    const applicationError = error?.name === 'Error'
+      && (!error.code || String(error.code).startsWith('CLAIM_KEY_') || clientConflict)
+      && rawMessage.length > 0
+      && rawMessage.length <= 500
+      && !/[\r\n\u0000-\u001f\u007f]/u.test(rawMessage);
+
+    let status = 500;
+    let safeMessage = 'Ocurrió un error inesperado. Inténtalo nuevamente.';
+    if (invalidJson) {
+      status = 400;
+      safeMessage = 'La solicitud contiene JSON inválido.';
+    } else if (payloadTooLarge) {
+      status = 413;
+      safeMessage = 'La solicitud supera el tamaño permitido.';
+    } else if (missingAsset) {
+      status = 404;
+      safeMessage = 'Recurso no encontrado.';
+    } else if (applicationError) {
+      status = clientConflict ? 409 : 400;
+      safeMessage = rawMessage;
+    }
+
+    const logMessage = invalidJson
+      ? 'Cuerpo JSON inválido; contenido omitido para proteger datos sensibles.'
+      : rawMessage || 'Error sin mensaje';
     console.error('[Dashboard]', {
-      name: error.name || 'Error',
-      type: error.type || 'application.error',
-      status: Number(error.status) || 400,
-      message: safeMessage,
+      name: error?.name || 'Error',
+      type: error?.type || 'application.error',
+      code: error?.code || null,
+      status,
+      message: logMessage,
     });
-    if (response.headersSent) return;
-    response.status(400).json({ error: safeMessage });
+    return response.status(status).json({ error: safeMessage });
   });
 
   const server = app.listen(config.port, '0.0.0.0', () => {

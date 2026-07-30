@@ -8,8 +8,11 @@ import { promisify } from 'node:util';
 
 const scrypt = promisify(nodeScrypt);
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1_000;
+const SESSION_DURATION_SECONDS = Math.floor(SESSION_DURATION_MS / 1_000);
+const PRINCIPAL_TYPES = new Set(['staff', 'client']);
 
-function safeEqual(left, right) {
+export function safeTokenEqual(left, right) {
+  if (typeof left !== 'string' || typeof right !== 'string') return false;
   const leftBuffer = Buffer.from(left);
   const rightBuffer = Buffer.from(right);
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
@@ -23,17 +26,19 @@ export async function hashPassword(password) {
 
 export async function verifyPassword(password, salt, expectedHash) {
   const derived = await scrypt(password, salt, 64);
-  return safeEqual(Buffer.from(derived).toString('hex'), expectedHash);
+  return safeTokenEqual(Buffer.from(derived).toString('hex'), expectedHash);
 }
 
 function sign(value, secret) {
   return createHmac('sha256', secret).update(value).digest('base64url');
 }
 
-export function createSession(userId, secret, sessionVersion = 1) {
+export function createSession(principalId, secret, sessionVersion = 1, principalType = 'staff') {
+  if (!PRINCIPAL_TYPES.has(principalType)) throw new Error('El tipo de sesión no es válido.');
   const payload = Buffer.from(
     JSON.stringify({
-      userId,
+      principalId,
+      principalType,
       sessionVersion,
       csrf: randomBytes(24).toString('base64url'),
       expiresAt: Date.now() + SESSION_DURATION_MS,
@@ -45,16 +50,29 @@ export function createSession(userId, secret, sessionVersion = 1) {
 export function verifySession(token, secret) {
   if (!token || typeof token !== 'string') return null;
   const [payload, signature, extra] = token.split('.');
-  if (!payload || !signature || extra || !safeEqual(sign(payload, secret), signature)) return null;
+  if (!payload || !signature || extra || !safeTokenEqual(sign(payload, secret), signature)) return null;
   try {
-    const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    const principalId = decoded.principalId ?? decoded.userId;
+    const principalType = decoded.principalType ?? 'staff';
     if (
-      !session.userId
-      || !Number.isInteger(session.sessionVersion)
-      || !session.csrf
-      || session.expiresAt <= Date.now()
+      typeof principalId !== 'string'
+      || !principalId
+      || !PRINCIPAL_TYPES.has(principalType)
+      || !Number.isInteger(decoded.sessionVersion)
+      || typeof decoded.csrf !== 'string'
+      || !decoded.csrf
+      || !Number.isFinite(decoded.expiresAt)
+      || decoded.expiresAt <= Date.now()
     ) return null;
-    return session;
+    return {
+      principalId,
+      principalType,
+      userId: principalId,
+      sessionVersion: decoded.sessionVersion,
+      csrf: decoded.csrf,
+      expiresAt: decoded.expiresAt,
+    };
   } catch {
     return null;
   }
@@ -67,7 +85,13 @@ export function readCookie(request, name) {
     const separator = part.indexOf('=');
     if (separator === -1) continue;
     const key = part.slice(0, separator).trim();
-    if (key === name) return decodeURIComponent(part.slice(separator + 1).trim());
+    if (key === name) {
+      try {
+        return decodeURIComponent(part.slice(separator + 1).trim());
+      } catch {
+        return null;
+      }
+    }
   }
   return null;
 }
@@ -78,6 +102,7 @@ export function sessionCookie(token, secure) {
     'Path=/',
     'HttpOnly',
     'SameSite=Strict',
+    `Max-Age=${SESSION_DURATION_SECONDS}`,
   ];
   if (secure) attributes.push('Secure');
   return attributes.join('; ');
