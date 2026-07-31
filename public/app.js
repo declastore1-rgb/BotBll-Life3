@@ -5,6 +5,8 @@ const state = {
   sessionGeneration: 0,
   permissions: [],
   resources: null,
+  security: null,
+  securityView: 'antiraid',
   users: [],
   clients: [],
   userDialogGeneration: 0,
@@ -30,9 +32,7 @@ const state = {
 };
 const pages = {
   overview: 'Resumen',
-  antiraid: 'Anti-Raid',
-  antinuke: 'Anti-Nuke',
-  automod: 'AutoMod',
+  security: 'Centro de Seguridad',
   tickets: 'Tickets',
   claimkey: 'Claim Key',
   embeds: 'Embeds',
@@ -41,8 +41,9 @@ const pages = {
   account: 'Mi cuenta',
 };
 const permissionPages = new Set([
-  'antiraid', 'antinuke', 'automod', 'tickets', 'claimkey', 'embeds', 'clients', 'users',
+  'tickets', 'claimkey', 'embeds', 'clients', 'users',
 ]);
+const securityPermissions = Object.freeze(['antiraid', 'antinuke', 'automod']);
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -102,6 +103,8 @@ function clearSessionUi() {
   $$('#app-view form, #client-view form, dialog form').forEach((form) => form.reset());
   $$('dialog[open]').forEach((dialog) => dialog.close());
   state.resources = null;
+  state.security = null;
+  state.securityView = 'antiraid';
   state.users = [];
   state.clients = [];
   state.clientPortal = { downloads: [] };
@@ -257,8 +260,23 @@ function applyPermissions() {
   $$('[data-permission]').forEach((element) => {
     element.classList.toggle('hidden', !state.permissions.includes(element.dataset.permission));
   });
+  $$('[data-any-permission]').forEach((element) => {
+    const permissions = element.dataset.anyPermission.split(',').map((item) => item.trim());
+    element.classList.toggle('hidden', !permissions.some((permission) => state.permissions.includes(permission)));
+  });
   for (const pageName of permissionPages) {
     $(`#page-${pageName}`).classList.toggle('hidden', !state.permissions.includes(pageName));
+  }
+  const canOpenSecurity = securityPermissions.some((permission) => state.permissions.includes(permission));
+  $('#page-security').classList.toggle('hidden', !canOpenSecurity);
+  if (canOpenSecurity) {
+    const currentPermission = state.securityView === 'antiraid'
+      ? 'antiraid'
+      : state.securityView === 'antinuke' ? 'antinuke' : 'automod';
+    if (!state.permissions.includes(currentPermission)) {
+      state.securityView = securityPermissions.find((permission) => state.permissions.includes(permission)) ?? 'antiraid';
+    }
+    switchSecurityView(state.securityView);
   }
   const activePage = $('.page.active');
   if (activePage?.classList.contains('hidden')) activateDashboardPage('overview');
@@ -270,12 +288,14 @@ async function loadOverview(authGeneration = null) {
   if (authGeneration !== null && state.authGeneration !== authGeneration) return false;
   state.permissions = data.permissions;
   applyPermissions();
-  $('#stat-antiraid').textContent = data.stats.antiRaidEnabled === null
-    ? 'Sin acceso'
-    : data.stats.antiRaidEnabled ? 'Activo' : 'Inactivo';
-  $('#stat-raidmode').textContent = data.stats.raidMode === null
-    ? 'Módulo restringido'
-    : data.stats.raidMode ? 'Modo raid activado' : 'Vigilancia normal';
+  $('#stat-antiraid').textContent = data.stats.securityProfileName ?? 'Sin acceso';
+  $('#stat-raidmode').textContent = data.stats.securityProfile === null
+    ? 'Centro restringido'
+    : data.stats.securityProfile === 'emergency'
+      ? 'Lockdown y respuesta máxima'
+      : data.stats.raidMode
+        ? 'Alerta de raid activa'
+        : data.stats.securityProfile === 'lite' ? 'Vigilancia pasiva' : 'Defensa coordinada';
   $('#stat-tickets').textContent = data.stats.openTickets ?? '—';
   const claimKeyStat = $('#stat-claimkey');
   if (claimKeyStat) {
@@ -337,9 +357,7 @@ async function openPage(name) {
   closeSidebar();
   try {
     if (name === 'overview') await loadOverview();
-    if (name === 'antiraid') await loadAntiRaid();
-    if (name === 'antinuke') await loadAntiNuke();
-    if (name === 'automod') await loadAutoMod();
+    if (name === 'security') await loadSecurity();
     if (name === 'tickets') await loadTickets();
     if (name === 'claimkey') await loadClaimKey();
     if (name === 'embeds') await loadEmbeds();
@@ -368,21 +386,73 @@ function formObject(form) {
   return result;
 }
 
-async function loadAntiRaid() {
-  const data = await api('/api/antiraid');
-  fillForm($('#antiraid-form'), data.settings);
-  const badge = $('#antiraid-live-badge');
-  badge.textContent = data.status.raidMode ? 'Modo raid' : data.settings.enabled ? 'Protección activa' : 'Desactivado';
-  badge.className = `badge ${data.status.raidMode || !data.settings.enabled ? 'danger' : 'success'}`;
+const responseModeLabels = Object.freeze({
+  passive: 'Pasivo',
+  balanced: 'Equilibrado',
+  strict: 'Estricto',
+});
+
+function switchSecurityView(name) {
+  const permission = name === 'antiraid' ? 'antiraid' : name === 'antinuke' ? 'antinuke' : 'automod';
+  if (!state.permissions.includes(permission)) return;
+  state.securityView = name;
+  $$('[data-security-view]').forEach((tab) => {
+    const active = tab.dataset.securityView === name;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', String(active));
+  });
+  $$('.security-module-panel').forEach((panel) => {
+    panel.classList.toggle('active', panel.id === `security-view-${name}`);
+  });
 }
 
-async function loadAntiNuke() {
-  const data = await api('/api/antinuke');
+function renderSecurityHealth(health) {
+  $('#security-health-score').textContent = `${health.score}%`;
+  const list = $('#security-health-list');
+  list.replaceChildren(...health.checks.map((check) => {
+    const item = document.createElement('div');
+    item.className = `security-health-item status-${check.status}`;
+    const signal = document.createElement('span');
+    signal.className = 'security-health-signal';
+    const copy = document.createElement('div');
+    const title = document.createElement('strong'); title.textContent = check.label;
+    const detail = document.createElement('small'); detail.textContent = check.detail;
+    copy.append(title, detail);
+    const status = document.createElement('span');
+    status.className = 'security-health-status';
+    status.textContent = check.status === 'ok' ? 'Correcto' : check.status === 'warning' ? 'Revisar' : 'Crítico';
+    item.append(signal, copy, status);
+    return item;
+  }));
+}
+
+function renderAntiRaidModule(data) {
+  if (!data) return;
+  fillForm($('#antiraid-form'), data.settings);
+  const badge = $('#antiraid-live-badge');
+  const mode = responseModeLabels[data.settings.responseMode] ?? 'Personalizado';
+  const stateLabel = !data.settings.enabled
+    ? 'Desactivado'
+    : data.settings.lockdownNewJoins ? 'Lockdown activo' : `${mode} activo`;
+  $('#security-antiraid-state').textContent = stateLabel;
+  $('#security-antiraid-detail').textContent = data.settings.lockdownNewJoins
+    ? 'Todas las nuevas entradas quedan bloqueadas.'
+    : `${data.status.joins} entradas · ${data.status.spam} mensajes · respuesta ${mode.toLowerCase()}.`;
+  badge.textContent = data.status.raidMode ? 'Alerta raid' : data.settings.enabled ? mode : 'Desactivado';
+  badge.className = `badge ${data.status.raidMode || data.settings.lockdownNewJoins ? 'danger' : data.settings.enabled ? 'success' : 'neutral'}`;
+}
+
+function renderAntiNukeModule(data) {
+  if (!data) return;
   fillForm($('#antinuke-form'), data.settings);
   const badge = $('#antinuke-live-badge');
-    badge.textContent = !data.settings.enabled ? 'Desactivado' : data.settings.emergencyMode ? 'Emergencia' : 'Protección activa';
+  const mode = responseModeLabels[data.settings.responseMode] ?? 'Personalizado';
+  $('#security-antinuke-state').textContent = !data.settings.enabled
+    ? 'Desactivado'
+    : data.settings.emergencyMode ? 'Emergencia activa' : `${mode} activo`;
+  $('#security-antinuke-detail').textContent = `${data.status.snapshots.channels} canales · ${data.status.snapshots.roles} roles · ${data.status.snapshots.emojis} emojis protegidos.`;
+  badge.textContent = !data.settings.enabled ? 'Desactivado' : data.settings.emergencyMode ? 'Emergencia' : mode;
   badge.className = `badge ${!data.settings.enabled ? 'neutral' : data.settings.emergencyMode ? 'danger' : 'success'}`;
-  $('#emergency-setting').classList.toggle('active', data.settings.emergencyMode);
   $('#snapshot-channels').textContent = data.status.snapshots.channels;
   $('#snapshot-roles').textContent = data.status.snapshots.roles;
   $('#snapshot-emojis').textContent = data.status.snapshots.emojis;
@@ -402,9 +472,12 @@ function renderAntiNukeIncidents(incidents) {
   list.replaceChildren(...incidents.map((incident) => {
     const item = document.createElement('article'); item.className = 'incident-item';
     const partial = incident.restored && (incident.relationErrors?.length ?? 0) > 0;
+    const failedReversion = incident.dangerousChange && incident.resourceReverted === false;
+    const observed = !failedReversion
+      && (incident.responseMode === 'passive' || (incident.eventKind === 'change' && !incident.sanctioned));
     const icon = document.createElement('span');
-    icon.className = `incident-icon ${partial ? 'partial' : incident.restored ? 'restored' : 'failed'}`;
-    icon.textContent = partial ? '≈' : incident.restored ? '↺' : '!';
+    icon.className = `incident-icon ${partial ? 'partial' : incident.restored ? 'restored' : failedReversion ? 'failed' : observed ? 'observed' : 'failed'}`;
+    icon.textContent = partial ? '≈' : incident.restored ? '↺' : failedReversion ? '!' : observed ? '·' : '!';
     const content = document.createElement('div');
     const title = document.createElement('strong');
     title.textContent = `${resourceLabels[incident.resourceType] ?? 'Recurso'} · ${incident.resourceName}`;
@@ -414,11 +487,13 @@ function renderAntiNukeIncidents(incidents) {
     if (incident.sanctioned) responses.push('sancionado');
     if (incident.rolesRemoved > 0) responses.push(`${incident.rolesRemoved} rol(es) retirado(s)`);
     if (incident.rolesError) responses.push(`retirada de roles fallida: ${incident.rolesError}`);
-    if (!responses.length) responses.push('sin sanción');
+    if (!responses.length) responses.push(incident.responseMode === 'passive' ? 'observado sin sanción' : 'sin sanción');
     const response = responses.join(' · ');
-    const restoration = partial
-      ? `Recreado parcialmente: ${incident.relationErrors.join(' ')}`
-      : incident.restored ? 'Restaurado completamente' : incident.restoreError || 'Restauración desactivada';
+    const restoration = failedReversion
+      ? `Reversión de permisos fallida: ${incident.restoreError || 'motivo desconocido'}`
+      : partial
+        ? `Recreado parcialmente: ${incident.relationErrors.join(' ')}`
+        : incident.restored ? 'Restaurado completamente' : incident.restoreError || 'Restauración desactivada';
     detail.textContent = `${restoration} · responsable ${executor} · ${response}`;
     content.append(title, detail);
     const time = document.createElement('time');
@@ -428,12 +503,59 @@ function renderAntiNukeIncidents(incidents) {
   }));
 }
 
-async function loadAutoMod() {
-  const data = await api('/api/automod');
+function renderAutoModModule(data) {
+  if (!data) return;
   fillForm($('#automod-form'), data.settings);
   const badge = $('#automod-live-badge');
-  badge.textContent = data.settings.enabled ? `${data.status.activeStrikes} usuarios con strikes` : 'Desactivado';
+  const mode = responseModeLabels[data.settings.responseMode] ?? 'Personalizado';
+  $('#security-automod-state').textContent = data.settings.enabled ? `${mode} activo` : 'Desactivado';
+  $('#security-automod-detail').textContent = data.settings.responseMode === 'passive'
+    ? 'Bloquea y avisa sin crear strikes ni sancionar.'
+    : `${data.status.activeStrikes} usuario(s) con strikes · sanción final ${data.status.finalAction}.`;
+  badge.textContent = data.settings.enabled ? mode : 'Desactivado';
   badge.className = `badge ${data.settings.enabled ? 'success' : 'neutral'}`;
+}
+
+function renderSecurity(data) {
+  state.security = data;
+  const profile = data.activeProfile;
+  const tone = ['lite', 'intermediate', 'emergency'].includes(profile.tone) ? profile.tone : 'custom';
+  $('#security-command-deck').className = `security-command-deck profile-${tone}`;
+  $('#security-active-profile').textContent = profile.name;
+  $('#security-active-description').textContent = profile.description;
+  $('#security-profile-badge').textContent = profile.name;
+  $('#security-profile-badge').className = `badge ${tone === 'emergency' ? 'danger' : tone === 'intermediate' ? 'success' : 'neutral'}`;
+  $('#security-activated-by').textContent = data.security.activatedBy || 'Sistema';
+  const activatedAt = data.security.activatedAt
+    ? new Date(data.security.activatedAt)
+    : null;
+  $('#security-activated-at').textContent = !activatedAt || Number.isNaN(activatedAt.getTime())
+    ? 'Configuración heredada'
+    : activatedAt.toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' });
+  renderSecurityHealth(data.health);
+
+  $$('[data-profile-card]').forEach((card) => card.classList.toggle('active', card.dataset.profileCard === data.security.profile));
+  $$('[data-security-profile]').forEach((button) => {
+    button.dataset.defaultLabel ||= button.textContent;
+    const active = button.dataset.securityProfile === data.security.profile;
+    button.disabled = active || !data.access.canActivateProfile;
+    button.setAttribute('aria-pressed', String(active));
+    button.textContent = active ? 'Perfil activo' : button.dataset.defaultLabel;
+  });
+  $('#security-profile-access-note').textContent = data.access.canActivateProfile
+    ? 'Tu cuenta puede cambiar el perfil global. Emergencia requiere una confirmación adicional.'
+    : 'Puedes administrar los módulos autorizados, pero necesitas los tres permisos de seguridad para cambiar el perfil global.';
+
+  renderAntiRaidModule(data.modules.antiRaid);
+  renderAntiNukeModule(data.modules.antiNuke);
+  renderAutoModModule(data.modules.autoMod);
+  applyPermissions();
+}
+
+async function loadSecurity() {
+  const data = await api('/api/security');
+  renderSecurity(data);
+  return data;
 }
 
 async function getResources() {
@@ -2186,31 +2308,66 @@ $('#sidebar-backdrop').addEventListener('click', closeSidebar);
 $('#logout-button').addEventListener('click', logoutCurrentSession);
 $('#client-logout-button').addEventListener('click', logoutCurrentSession);
 
+$$('[data-security-view]').forEach((tab) => {
+  tab.addEventListener('click', () => switchSecurityView(tab.dataset.securityView));
+});
+$$('[data-security-profile]').forEach((button) => {
+  button.addEventListener('click', async () => {
+    const profile = button.dataset.securityProfile;
+    if (profile === 'emergency' && !confirm(
+      'El modo Emergencia bloqueará todas las nuevas entradas y activará la respuesta más estricta. ¿Confirmas que existe una amenaza real?',
+    )) return;
+    setButtonBusy(button, true, 'Activando...');
+    let data;
+    try {
+      data = await api('/api/security/profile', { method: 'PUT', body: { profile } });
+    } catch (error) {
+      toast(error.message, 'error');
+      setButtonBusy(button, false);
+      return;
+    }
+    renderSecurity(data);
+    const successMessage = profile === 'emergency'
+      ? 'Modo Emergencia activado. El servidor está en lockdown.'
+      : `Perfil ${data.activeProfile.name} activado.`;
+    toast(data.snapshotWarning ? `${successMessage} ${data.snapshotWarning}` : successMessage);
+    loadOverview().catch(() => {
+      toast('El perfil se activó, pero no se pudo refrescar el resumen.', 'error');
+    });
+  });
+});
+$('#refresh-security-center').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  setButtonBusy(button, true, 'Comprobando...');
+  try {
+    await loadSecurity();
+    toast('Estado de seguridad actualizado.');
+  } catch (error) { toast(error.message, 'error'); }
+  finally { setButtonBusy(button, false); }
+});
+
 $('#antiraid-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = event.currentTarget.querySelector('[type="submit"]');
   setButtonBusy(button, true, 'Guardando...');
   try {
     await api('/api/antiraid', { method: 'PATCH', body: formObject(event.currentTarget) });
-    $('#antiraid-save-state').textContent = 'Cambios aplicados en tiempo real';
+    $('#antiraid-save-state').textContent = 'Guardado como perfil Personalizado';
     toast('Protección Anti-Raid actualizada.');
-    await loadAntiRaid();
+    await loadSecurity();
   } catch (error) { toast(error.message, 'error'); }
   finally { setButtonBusy(button, false); }
 });
 
-$('#antinuke-form [name="emergencyMode"]').addEventListener('change', (event) => {
-  $('#emergency-setting').classList.toggle('active', event.currentTarget.checked);
-});
 $('#antinuke-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = event.currentTarget.querySelector('[type="submit"]');
   setButtonBusy(button, true, 'Guardando...');
   try {
     await api('/api/antinuke', { method: 'PATCH', body: formObject(event.currentTarget) });
-    $('#antinuke-save-state').textContent = 'Protección actualizada';
+    $('#antinuke-save-state').textContent = 'Guardado como perfil Personalizado';
     toast('Anti-Nuke actualizado.');
-    await loadAntiNuke();
+    await loadSecurity();
   } catch (error) { toast(error.message, 'error'); }
   finally { setButtonBusy(button, false); }
 });
@@ -2220,7 +2377,7 @@ $('#refresh-security-snapshot').addEventListener('click', async (event) => {
   try {
     await api('/api/antinuke/snapshot', { method: 'POST' });
     toast('Copia de seguridad actualizada.');
-    await loadAntiNuke();
+    await loadSecurity();
   } catch (error) { toast(error.message, 'error'); }
   finally { setButtonBusy(button, false); }
 });
@@ -2231,9 +2388,9 @@ $('#automod-form').addEventListener('submit', async (event) => {
   setButtonBusy(button, true, 'Guardando...');
   try {
     await api('/api/automod', { method: 'PATCH', body: formObject(event.currentTarget) });
-    $('#automod-save-state').textContent = 'Filtros actualizados';
+    $('#automod-save-state').textContent = 'Guardado como perfil Personalizado';
     toast('AutoMod actualizado.');
-    await loadAutoMod();
+    await loadSecurity();
   } catch (error) { toast(error.message, 'error'); }
   finally { setButtonBusy(button, false); }
 });
@@ -2244,7 +2401,7 @@ $('#clear-automod-strikes').addEventListener('click', async (event) => {
   try {
     await api('/api/automod/strikes', { method: 'DELETE' });
     toast('Strikes de AutoMod reiniciados.');
-    await loadAutoMod();
+    await loadSecurity();
   } catch (error) { toast(error.message, 'error'); }
   finally { setButtonBusy(button, false); }
 });

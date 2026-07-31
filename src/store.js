@@ -8,6 +8,12 @@ import {
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { hashPassword } from './auth.js';
+import {
+  getSecurityProfile,
+  isSecurityProfileId,
+  normalizeSecuritySettings,
+  securityProfilePatches,
+} from './securityProfiles.js';
 
 export const dashboardPermissions = Object.freeze([
   'antiraid',
@@ -309,6 +315,18 @@ function publicClientPortal(section, includeDisabled = false) {
   };
 }
 
+function publicSecuritySettings(security) {
+  const { activatedByUserId: _activatedByUserId, ...safeSecurity } = security ?? {};
+  return clone(safeSecurity);
+}
+
+function guildMatchesSecurityProfile(settings, profileId) {
+  const patches = securityProfilePatches(profileId);
+  return Object.entries(patches).every(([moduleName, patch]) => (
+    Object.entries(patch).every(([key, value]) => Object.is(settings[moduleName]?.[key], value))
+  ));
+}
+
 function userCanManageEmbeds(user) {
   return Boolean(user && !user.disabled && (user.isAdmin || user.permissions.includes('embeds')));
 }
@@ -433,7 +451,7 @@ export class SettingsStore {
       this.data = { version: 1, users: [], guilds: {}, audit: [] };
     }
 
-    this.data.version = Math.max(Number(this.data.version) || 1, 4);
+    this.data.version = Math.max(Number(this.data.version) || 1, 5);
     this.data.users ??= [];
     this.data.clients ??= [];
     this.data.guilds ??= {};
@@ -457,7 +475,8 @@ export class SettingsStore {
       clients.push(client);
     }
     this.data.clients = clients;
-    const existing = this.data.guilds[this.guildId] ?? {};
+    const existingGuild = this.data.guilds[this.guildId];
+    const existing = existingGuild ?? {};
     const existingClaimKey = existing.claimKey ?? {};
     const claimKeyCredentials = [];
     const claimKeyUsernames = new Set();
@@ -471,6 +490,9 @@ export class SettingsStore {
       if (claimKeyCredentials.length >= CLAIM_KEY_MAX_CREDENTIALS) break;
     }
     this.data.guilds[this.guildId] = {
+      security: normalizeSecuritySettings(existing.security ?? this.defaults.security, {
+        legacy: Boolean(existingGuild && !existing.security),
+      }),
       antiRaid: { ...clone(this.defaults.antiRaid), ...(existing.antiRaid ?? {}) },
       antiNuke: {
         ...clone(this.defaults.antiNuke),
@@ -504,6 +526,19 @@ export class SettingsStore {
         schedules: Array.isArray(existing.embeds?.schedules) ? existing.embeds.schedules : [],
       },
     };
+    const initializedGuild = this.data.guilds[this.guildId];
+    if (
+      !existingGuild
+      && isSecurityProfileId(initializedGuild.security.profile)
+      && !guildMatchesSecurityProfile(initializedGuild, initializedGuild.security.profile)
+    ) {
+      initializedGuild.security = {
+        ...initializedGuild.security,
+        profile: 'custom',
+        previousProfile: initializedGuild.security.profile,
+        activatedBy: 'Configuración inicial personalizada',
+      };
+    }
 
     if (this.data.users.length === 0) {
       const username = validateUsername(this.adminUsername);
@@ -1032,10 +1067,18 @@ export class SettingsStore {
   async recordAutoModStrike(guildId, userId, rule, windowHours) {
     return this.mutate((data) => {
       const autoMod = data.guilds[guildId].autoMod;
+      if (!autoMod.enabled || autoMod.responseMode === 'passive') {
+        return { skipped: true };
+      }
       const now = Date.now();
       const windowMs = windowHours * 3_600_000;
+      const profileActivatedAt = Date.parse(data.guilds[guildId].security?.activatedAt ?? '');
       autoMod.strikes = autoMod.strikes.filter((item) => now - item.lastAt <= windowMs);
       let strike = autoMod.strikes.find((item) => item.userId === userId);
+      if (strike && Number.isFinite(profileActivatedAt) && strike.lastAt < profileActivatedAt) {
+        strike.count = 0;
+        strike.finalizedAt = null;
+      }
       if (!strike) {
         strike = { userId, count: 0, lastAt: now, lastRule: rule, finalizedAt: null };
         autoMod.strikes.push(strike);
@@ -1047,6 +1090,8 @@ export class SettingsStore {
         .sort((left, right) => right.lastAt - left.lastAt)
         .slice(0, 500);
       return clone(strike);
+    }, {
+      shouldPersist: (result) => !result.skipped,
     });
   }
 
@@ -1061,9 +1106,62 @@ export class SettingsStore {
 
   async clearAutoModStrikes(guildId, actor) {
     return this.mutate((data) => {
+      const currentActor = data.users.find((user) => user.id === actor?.id);
+      if (!can(currentActor, 'automod')) {
+        throw new Error('Tu usuario ya no tiene permiso para administrar AutoMod.');
+      }
       data.guilds[guildId].autoMod.strikes = [];
-      this.addAudit(actor, 'AutoMod', 'Historial de sanciones progresivas reiniciado');
+      this.addAudit(currentActor, 'AutoMod', 'Historial de sanciones progresivas reiniciado');
       return true;
+    });
+  }
+
+  getSecurityState(guildId = this.guildId) {
+    const security = this.data.guilds[guildId]?.security;
+    if (!security) throw new Error('El Centro de Seguridad no está disponible.');
+    return publicSecuritySettings(security);
+  }
+
+  async applySecurityProfile(guildId, profileId, actor) {
+    if (!isSecurityProfileId(profileId)) {
+      throw new Error('El perfil de seguridad seleccionado no es válido.');
+    }
+    if (!actor?.id || typeof actor.id !== 'string') {
+      throw new Error('No se pudo identificar al operador de seguridad.');
+    }
+    const profile = getSecurityProfile(profileId);
+    const patches = securityProfilePatches(profileId);
+    return this.mutate((data) => {
+      const currentActor = data.users.find((user) => user.id === actor.id);
+      const requiredPermissions = ['antiraid', 'antinuke', 'automod'];
+      if (!requiredPermissions.every((permission) => can(currentActor, permission))) {
+        throw new Error('Necesitas permisos de Anti-Raid, Anti-Nuke y AutoMod para cambiar el perfil global.');
+      }
+      const guild = data.guilds[guildId];
+      if (!guild) throw new Error('El servidor no tiene configuración de seguridad.');
+      const previous = normalizeSecuritySettings(guild.security ?? this.defaults.security);
+      const now = new Date().toISOString();
+      guild.antiRaid = { ...guild.antiRaid, ...patches.antiRaid };
+      guild.antiNuke = { ...guild.antiNuke, ...patches.antiNuke };
+      guild.autoMod = { ...guild.autoMod, ...patches.autoMod };
+      guild.security = {
+        ...previous,
+        profile: profileId,
+        previousProfile: isSecurityProfileId(previous.profile)
+          ? previous.profile
+          : previous.previousProfile,
+        activatedAt: now,
+        activatedBy: currentActor.username,
+        activatedByUserId: currentActor.id,
+        updatedAt: now,
+      };
+      this.addAudit(currentActor, 'Seguridad', `Perfil ${profile.name} activado`);
+      return {
+        security: publicSecuritySettings(guild.security),
+        antiRaid: clone(guild.antiRaid),
+        antiNuke: clone(guild.antiNuke),
+        autoMod: clone(guild.autoMod),
+      };
     });
   }
 
@@ -1074,11 +1172,39 @@ export class SettingsStore {
       autoMod: 'AutoMod',
       tickets: 'Tickets',
     };
+    const securityPermissions = {
+      antiRaid: 'antiraid',
+      antiNuke: 'antinuke',
+      autoMod: 'automod',
+    };
     if (!modules[section]) throw new Error('Sección inválida.');
     return this.mutate((data) => {
       data.guilds[guildId] ??= clone(this.data.guilds[this.guildId]);
+      let auditActor = actor;
+      if (securityPermissions[section]) {
+        const currentActor = data.users.find((user) => user.id === actor?.id);
+        if (!can(currentActor, securityPermissions[section])) {
+          throw new Error(`Tu usuario ya no tiene permiso para administrar ${modules[section]}.`);
+        }
+        auditActor = currentActor;
+        const security = normalizeSecuritySettings(
+          data.guilds[guildId].security ?? this.defaults.security,
+        );
+        const now = new Date().toISOString();
+        data.guilds[guildId].security = {
+          ...security,
+          profile: 'custom',
+          previousProfile: isSecurityProfileId(security.profile)
+            ? security.profile
+            : security.previousProfile,
+          activatedAt: now,
+          activatedBy: currentActor.username,
+          activatedByUserId: currentActor.id,
+          updatedAt: now,
+        };
+      }
       data.guilds[guildId][section] = { ...data.guilds[guildId][section], ...clone(patch) };
-      this.addAudit(actor, modules[section], 'Configuración actualizada');
+      this.addAudit(auditActor, modules[section], 'Configuración actualizada');
       return clone(data.guilds[guildId][section]);
     });
   }

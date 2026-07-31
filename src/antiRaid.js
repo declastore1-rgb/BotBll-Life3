@@ -25,9 +25,22 @@ export class AntiRaid {
 
   start() {
     this.client.on(Events.GuildMemberAdd, (member) => this.onMemberAdd(member).catch(console.error));
+    this.client.on(Events.GuildMemberRemove, (member) => {
+      this.onDestructiveEvent(member.guild, AuditLogEvent.MemberKick, member.id, 'expulsiones masivas').catch(console.error);
+    });
+    this.client.on(Events.GuildMemberUpdate, (previous, member) => {
+      const previousTimeout = previous.communicationDisabledUntilTimestamp ?? 0;
+      const currentTimeout = member.communicationDisabledUntilTimestamp ?? 0;
+      if (currentTimeout > Date.now() && currentTimeout > previousTimeout) {
+        this.onDestructiveEvent(member.guild, AuditLogEvent.MemberUpdate, member.id, 'aislamientos masivos').catch(console.error);
+      }
+    });
     this.client.on(Events.MessageCreate, (message) => this.onMessage(message).catch(console.error));
     this.client.on(Events.GuildBanAdd, (ban) => {
       this.onDestructiveEvent(ban.guild, AuditLogEvent.MemberBanAdd, ban.user.id, 'baneos masivos').catch(console.error);
+    });
+    this.client.on(Events.GuildBanRemove, (ban) => {
+      this.onDestructiveEvent(ban.guild, AuditLogEvent.MemberBanRemove, ban.user.id, 'desbaneos masivos').catch(console.error);
     });
     this.client.on(Events.WebhooksUpdate, (channel) => {
       this.onWebhookUpdate(channel.guild).catch(console.error);
@@ -42,7 +55,11 @@ export class AntiRaid {
   }
 
   isRaidMode(guildId) {
-    return (this.raidModeUntil.get(guildId) ?? 0) > Date.now();
+    const settings = this.settings(guildId);
+    return Boolean(
+      settings.enabled
+      && (settings.lockdownNewJoins || (this.raidModeUntil.get(guildId) ?? 0) > Date.now()),
+    );
   }
 
   clearRaidMode(guildId) {
@@ -63,13 +80,19 @@ export class AntiRaid {
     const settings = this.settings(guildId);
     return {
       enabled: settings.enabled,
+      responseMode: settings.responseMode,
+      lockdownNewJoins: settings.lockdownNewJoins,
       raidMode: this.isRaidMode(guildId),
-      raidModeUntil: this.raidModeUntil.get(guildId) ?? null,
-      action: settings.action,
+      raidModeUntil: settings.lockdownNewJoins ? null : this.raidModeUntil.get(guildId) ?? null,
+      action: settings.responseMode === 'passive' ? 'Solo avisos' : settings.action,
       joins: `${settings.joinThreshold}/${settings.joinWindowSeconds}s`,
       minimumAge: `${settings.minAccountAgeHours}h`,
       spam: `${settings.spamMessageThreshold}/${settings.spamWindowSeconds}s`,
-      spamWarning: settings.spamWarningEnabled ? `Aviso + sanción en ${settings.spamEscalationMinutes} min` : 'Sanción inmediata',
+      spamWarning: settings.responseMode === 'passive'
+        ? 'Aviso y bloqueo sin sanción'
+        : settings.spamWarningEnabled
+          ? `Aviso + sanción en ${settings.spamEscalationMinutes} min`
+          : 'Sanción inmediata',
       mentions: settings.massMentionThreshold,
       destructive: `${settings.destructiveThreshold}/${settings.destructiveWindowSeconds}s`,
     };
@@ -91,20 +114,33 @@ export class AntiRaid {
     await channel.send({ embeds: [embed] }).catch(console.error);
   }
 
-  async applyAction(member, reason, settings = this.settings(member?.guild.id)) {
-    if (!member || this.isTrusted(member.guild, member.id, settings)) return false;
+  async applyAction(member, reason, requestedSettings = null) {
+    if (!member) return false;
+    const currentSettings = this.settings(member.guild.id);
+    const sourceModule = requestedSettings?.sourceModule ?? 'antiraid';
+    const effectiveSettings = sourceModule === 'antiraid'
+      ? currentSettings
+      : { ...currentSettings, ...requestedSettings };
+    const responseMode = sourceModule === 'antiraid'
+      ? currentSettings.responseMode
+      : requestedSettings?.responseMode;
+    if (
+      (sourceModule === 'antiraid' && !currentSettings.enabled)
+      || responseMode === 'passive'
+      || this.isTrusted(member.guild, member.id, currentSettings)
+    ) return false;
     const auditReason = `BLL Anti-Raid: ${reason}`;
     try {
-      if (settings.action === 'ban' && member.bannable) {
+      if (effectiveSettings.action === 'ban' && member.bannable) {
         await member.ban({ reason: auditReason, deleteMessageSeconds: 60 * 60 });
         return true;
       }
-      if (settings.action === 'kick' && member.kickable) {
+      if (effectiveSettings.action === 'kick' && member.kickable) {
         await member.kick(auditReason);
         return true;
       }
       if (member.moderatable) {
-        await member.timeout(settings.timeoutMinutes * 60_000, auditReason);
+        await member.timeout(effectiveSettings.timeoutMinutes * 60_000, auditReason);
         return true;
       }
     } catch (error) {
@@ -114,15 +150,29 @@ export class AntiRaid {
   }
 
   async punishExecutor(guild, executorId, reason, settings = this.settings(guild.id)) {
-    if (this.isTrusted(guild, executorId, settings)) return;
+    settings = this.settings(guild.id);
+    if (!settings.enabled || this.isTrusted(guild, executorId, settings)) return;
+    if (settings.responseMode === 'passive') {
+      await this.log(
+        guild,
+        'Amenaza observada · Modo Lite',
+        `<@${executorId}> fue detectado por **${reason}**. El perfil pasivo no aplica sanciones.`,
+        0xfee75c,
+      );
+      return;
+    }
     const member = await guild.members.fetch(executorId).catch(() => null);
     if (!member) return;
     const applied = await this.applyAction(member, reason, settings);
+    const currentSettings = this.settings(guild.id);
+    const passiveNow = !currentSettings.enabled || currentSettings.responseMode === 'passive';
     await this.log(
       guild,
-      applied ? 'Amenaza neutralizada' : 'No se pudo sancionar',
-      `<@${executorId}> fue detectado por **${reason}**.`,
-      applied ? 0x57f287 : 0xed4245,
+      applied ? 'Amenaza neutralizada' : passiveNow ? 'Amenaza observada · Respuesta cancelada' : 'No se pudo sancionar',
+      passiveNow
+        ? `<@${executorId}> fue detectado por **${reason}**, pero la postura actual ya no permite sancionarlo.`
+        : `<@${executorId}> fue detectado por **${reason}**.`,
+      applied ? 0x57f287 : passiveNow ? 0xfee75c : 0xed4245,
     );
   }
 
@@ -138,7 +188,7 @@ export class AntiRaid {
     this.joins.set(member.guild.id, recent);
 
     if (member.user.bot) {
-      await this.checkAddedBot(member, settings);
+      if (settings.blockUnauthorizedBots) await this.checkAddedBot(member, settings);
       return;
     }
     if (recent.length >= settings.joinThreshold && !this.isRaidMode(member.guild.id)) {
@@ -152,7 +202,15 @@ export class AntiRaid {
     const accountAge = now - member.user.createdTimestamp;
     if (this.isRaidMode(member.guild.id)) {
       const applied = await this.applyAction(member, 'entrada durante modo raid', settings);
-      if (applied) await this.log(member.guild, 'Entrada bloqueada', `${member.user.tag} entró durante el modo raid.`);
+      if (applied) {
+        await this.log(member.guild, 'Entrada bloqueada', `${member.user.tag} entró durante el modo raid.`);
+      } else if (settings.responseMode === 'passive') {
+        await this.log(
+          member.guild,
+          'Entrada observada · Modo Lite',
+          `${member.user.tag} entró durante una alerta, sin sanción automática.`,
+        );
+      }
       return;
     }
     if (accountAge < settings.minAccountAgeHours * 3_600_000) {
@@ -163,6 +221,12 @@ export class AntiRaid {
           'Cuenta nueva bloqueada',
           `${member.user.tag} tenía una antigüedad inferior a ${settings.minAccountAgeHours} horas.`,
         );
+      } else if (settings.responseMode === 'passive') {
+        await this.log(
+          member.guild,
+          'Cuenta nueva observada · Modo Lite',
+          `${member.user.tag} no alcanza ${settings.minAccountAgeHours} horas de antigüedad.`,
+        );
       }
     }
   }
@@ -170,13 +234,21 @@ export class AntiRaid {
   async checkAddedBot(botMember, settings) {
     await sleep(750);
     settings = this.settings(botMember.guild.id);
-    if (!settings.enabled) return;
+    if (!settings.enabled || !settings.blockUnauthorizedBots) return;
     const logs = await botMember.guild.fetchAuditLogs({ type: AuditLogEvent.BotAdd, limit: 5 }).catch(() => null);
     const entry = logs?.entries.find(
       (item) => item.targetId === botMember.id && Date.now() - item.createdTimestamp < 10_000,
     );
-    if (!entry || this.isTrusted(botMember.guild, entry.executorId, settings)) return;
-    if (botMember.kickable) await botMember.kick('BLL Anti-Raid: bot no autorizado').catch(console.error);
+    settings = this.settings(botMember.guild.id);
+    if (
+      !entry
+      || !settings.enabled
+      || !settings.blockUnauthorizedBots
+      || this.isTrusted(botMember.guild, entry.executorId, settings)
+    ) return;
+    if (settings.responseMode !== 'passive' && botMember.kickable) {
+      await botMember.kick('BLL Anti-Raid: bot no autorizado').catch(console.error);
+    }
     await this.punishExecutor(botMember.guild, entry.executorId, 'adición de bot no autorizado', settings);
   }
 

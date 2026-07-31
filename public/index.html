@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090b12">
-  <meta name="app-version" content="client-portal-20260729-10">
+  <meta name="app-version" content="client-portal-20260729-11">
   <title>BLL $ LIFE · Control Center</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=client-portal-20260729-10">
-  <script src="/assets/app.js?v=client-portal-20260729-10" defer></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=client-portal-20260729-11">
+  <script src="/assets/app.js?v=client-portal-20260729-11" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -48,9 +48,7 @@
       </div>
       <nav class="nav-list" aria-label="Navegación principal">
         <button class="nav-item active" data-page="overview"><span class="nav-icon">◈</span><span>Resumen</span></button>
-        <button class="nav-item" data-page="antiraid" data-permission="antiraid"><span class="nav-icon">◇</span><span>Anti-Raid</span></button>
-        <button class="nav-item" data-page="antinuke" data-permission="antinuke"><span class="nav-icon">⬡</span><span>Anti-Nuke</span></button>
-        <button class="nav-item" data-page="automod" data-permission="automod"><span class="nav-icon">◉</span><span>AutoMod</span></button>
+        <button class="nav-item" data-page="security" data-any-permission="antiraid,antinuke,automod"><span class="nav-icon">⬢</span><span>Centro de Seguridad</span></button>
         <button class="nav-item" data-page="tickets" data-permission="tickets"><span class="nav-icon">▱</span><span>Tickets</span></button>
         <button class="nav-item" data-page="claimkey" data-permission="claimkey"><span class="nav-icon">◇</span><span>Claim Key</span></button>
         <button class="nav-item" data-page="embeds" data-permission="embeds"><span class="nav-icon">▤</span><span>Embeds</span></button>
@@ -79,7 +77,7 @@
             <div class="shield-visual"><div class="shield-ring"></div><div class="shield-core">BLL</div></div>
           </div>
           <div class="stats-grid">
-            <article class="stat-card"><span class="stat-label">Anti-Raid</span><strong id="stat-antiraid">—</strong><small id="stat-raidmode">Comprobando</small></article>
+            <article class="stat-card"><span class="stat-label">Perfil de seguridad</span><strong id="stat-antiraid">—</strong><small id="stat-raidmode">Comprobando</small></article>
             <article class="stat-card"><span class="stat-label">Tickets abiertos</span><strong id="stat-tickets">0</strong><small>Canales activos</small></article>
             <article class="stat-card" data-permission="claimkey"><span class="stat-label">Claim Key</span><strong id="stat-claimkey">—</strong><small id="stat-claimkey-detail">Accesos disponibles</small></article>
             <article class="stat-card"><span class="stat-label">Miembros</span><strong id="stat-members">0</strong><small id="stat-guild">Servidor</small></article>
@@ -98,81 +96,129 @@
           </div>
         </section>
 
-        <section id="page-antiraid" class="page">
-          <div class="section-heading"><div><div class="eyebrow">PROTECCIÓN EN TIEMPO REAL</div><h3>Sistema Anti-Raid</h3><p class="muted">Ajusta los límites sin reiniciar el bot.</p></div><span id="antiraid-live-badge" class="badge neutral">Cargando</span></div>
-          <form id="antiraid-form" class="panel-card settings-form">
-            <div class="setting-row featured"><div><strong>Protección principal</strong><p>Activa todos los detectores y sanciones automáticas.</p></div><label class="switch"><input name="enabled" type="checkbox"><span></span></label></div>
-            <div class="form-grid three">
-              <label class="field"><span>Sanción automática</span><select name="action"><option value="ban">Banear</option><option value="kick">Expulsar</option><option value="timeout">Aislar (timeout)</option></select></label>
-              <label class="field"><span>Entradas máximas</span><input name="joinThreshold" type="number" min="2" max="100" required></label>
-              <label class="field"><span>Ventana de entradas (s)</span><input name="joinWindowSeconds" type="number" min="1" max="300" required></label>
-              <label class="field"><span>Duración modo raid (min)</span><input name="raidModeMinutes" type="number" min="1" max="1440" required></label>
-              <label class="field"><span>Edad mínima de cuenta (h)</span><input name="minAccountAgeHours" type="number" min="0" max="8760" required></label>
-              <label class="field"><span>Menciones máximas</span><input name="massMentionThreshold" type="number" min="2" max="100" required></label>
-              <label class="field"><span>Mensajes para detectar spam</span><input name="spamMessageThreshold" type="number" min="3" max="100" required></label>
-              <label class="field"><span>Ventana de spam (s)</span><input name="spamWindowSeconds" type="number" min="1" max="300" required></label>
-              <label class="field"><span>Mensajes duplicados</span><input name="duplicateMessageThreshold" type="number" min="2" max="20" required><small>Repeticiones permitidas antes de actuar.</small></label>
-              <label class="field"><span>Enlaces máximos por mensaje</span><input name="maxLinksPerMessage" type="number" min="1" max="20" required></label>
-              <label class="field"><span>Escalado por reincidencia (min)</span><input name="spamEscalationMinutes" type="number" min="1" max="1440" required></label>
-              <label class="field"><span>Acciones destructivas</span><input name="destructiveThreshold" type="number" min="2" max="50" required></label>
-              <label class="field"><span>Ventana destructiva (s)</span><input name="destructiveWindowSeconds" type="number" min="1" max="300" required></label>
-              <label class="field"><span>Duración timeout (min)</span><input name="timeoutMinutes" type="number" min="1" max="40320" required></label>
-            </div>
-            <div class="setting-row"><div><strong>Aviso antes de sancionar spam</strong><p>Envía una advertencia y escala si reincide dentro del periodo configurado.</p></div><label class="switch"><input name="spamWarningEnabled" type="checkbox"><span></span></label></div>
-            <label class="field"><span>Mensaje de advertencia de spam</span><textarea name="spamWarningMessage" rows="3" maxlength="180" required placeholder="Baja la intensidad o serás sancionado..."></textarea></label>
-            <label class="field"><span>Lista blanca · IDs separados por coma</span><textarea name="trustedUserIds" rows="3" placeholder="123456789012345678, 987654321098765432"></textarea><small>El dueño del servidor y el bot siempre están protegidos.</small></label>
-            <div class="form-actions"><span id="antiraid-save-state" class="save-state"></span><button class="button primary" type="submit">Guardar Anti-Raid</button></div>
-          </form>
-        </section>
-
-        <section id="page-antinuke" class="page">
-          <div class="section-heading"><div><div class="eyebrow">DEFENSA DE ESTRUCTURA</div><h3>Anti-Nuke Avanzado</h3><p class="muted">Detecta eliminaciones, neutraliza responsables y restaura recursos.</p></div><span id="antinuke-live-badge" class="badge neutral">Cargando</span></div>
-          <form id="antinuke-form" class="panel-card settings-form">
-            <div class="setting-row featured"><div><strong>Protección Anti-Nuke</strong><p>Vigila eliminaciones de canales, roles y emojis mediante el registro de auditoría.</p></div><label class="switch"><input name="enabled" type="checkbox"><span></span></label></div>
-            <div id="emergency-setting" class="setting-row emergency-setting"><div><strong>Modo de emergencia</strong><p>Neutraliza desde la primera eliminación no autorizada.</p></div><label class="switch"><input name="emergencyMode" type="checkbox"><span></span></label></div>
-            <div class="form-grid two">
-              <label class="check-row"><input name="autoRestore" type="checkbox"><span><strong>Restauración automática</strong><small>Recrea canales, roles y emojis usando la última copia.</small></span></label>
-              <label class="check-row"><input name="removeDangerousRoles" type="checkbox"><span><strong>Retirar roles peligrosos</strong><small>Quita permisos administrativos antes de aplicar la sanción.</small></span></label>
-              <label class="field"><span>Acciones antes de neutralizar</span><input name="actionThreshold" type="number" min="1" max="20" required></label>
-              <label class="field"><span>Ventana de acciones (s)</span><input name="actionWindowSeconds" type="number" min="3" max="300" required></label>
-            </div>
-            <div class="form-actions"><span id="antinuke-save-state" class="save-state"></span><button class="button primary" type="submit">Guardar Anti-Nuke</button></div>
-          </form>
-          <div class="security-grid">
-            <article class="panel-card snapshot-card"><div class="card-header"><div><div class="eyebrow">COPIA DE SEGURIDAD</div><h3>Recursos protegidos</h3></div><button id="refresh-security-snapshot" class="button ghost" type="button">Actualizar copia</button></div><div class="snapshot-stats"><div><strong id="snapshot-channels">0</strong><small>Canales</small></div><div><strong id="snapshot-roles">0</strong><small>Roles</small></div><div><strong id="snapshot-emojis">0</strong><small>Emojis</small></div></div><p id="snapshot-date" class="muted helper-copy">Sin copia registrada.</p></article>
-            <article class="panel-card"><div class="card-header"><div><div class="eyebrow">INCIDENTES</div><h3>Actividad reciente</h3></div></div><div id="antinuke-incidents" class="incident-list"><p class="empty-state">No hay incidentes.</p></div></article>
+        <section id="page-security" class="page">
+          <div class="section-heading security-heading">
+            <div><div class="eyebrow">DEFENSA COORDINADA</div><h3>Centro de Seguridad</h3><p class="muted">Un solo perfil controla Anti-Raid, Anti-Nuke y AutoMod. Los ajustes avanzados permanecen separados por permiso.</p></div>
+            <div class="security-heading-actions"><span id="security-profile-badge" class="badge neutral">Cargando perfil</span><button id="refresh-security-center" class="button ghost" type="button">Actualizar estado</button></div>
           </div>
-        </section>
 
-        <section id="page-automod" class="page">
-          <div class="section-heading"><div><div class="eyebrow">MODERACIÓN DE CONTENIDO</div><h3>AutoMod Configurable</h3><p class="muted">Filtra contenido y aplica advertencias, timeout y sanción final.</p></div><span id="automod-live-badge" class="badge neutral">Cargando</span></div>
-          <form id="automod-form" class="panel-card settings-form">
-            <div class="setting-row featured"><div><strong>Protección AutoMod</strong><p>Analiza mensajes y archivos de miembros no confiables.</p></div><label class="switch"><input name="enabled" type="checkbox"><span></span></label></div>
-            <div class="form-grid three">
-              <label class="check-row"><input name="blockInvites" type="checkbox"><span><strong>Bloquear invitaciones</strong><small>Elimina invitaciones de Discord.</small></span></label>
-              <label class="check-row"><input name="blockUnauthorizedLinks" type="checkbox"><span><strong>Enlaces no autorizados</strong><small>Solo permite dominios de la lista blanca.</small></span></label>
-              <label class="check-row"><input name="blockSuspiciousFiles" type="checkbox"><span><strong>Archivos sospechosos</strong><small>Bloquea extensiones configuradas.</small></span></label>
-              <label class="field"><span>Mayúsculas máximas (%)</span><input name="maxCapsPercent" type="number" min="50" max="100" required></label>
-              <label class="field"><span>Letras mínimas para medir</span><input name="capsMinimumLength" type="number" min="4" max="100" required></label>
-              <label class="field"><span>Emojis máximos</span><input name="maxEmojis" type="number" min="1" max="100" required></label>
+          <article id="security-command-deck" class="security-command-deck profile-custom">
+            <div class="security-command-signal" aria-hidden="true"><span></span><strong>SEC</strong></div>
+            <div class="security-command-copy"><div class="eyebrow">POSTURA ACTUAL</div><h4 id="security-active-profile">Sincronizando...</h4><p id="security-active-description">Leyendo la configuración persistida y el estado de Discord.</p></div>
+            <div class="security-command-meta"><div><span>Activado por</span><strong id="security-activated-by">—</strong></div><div><span>Último cambio</span><strong id="security-activated-at">—</strong></div><div><span>Diagnóstico</span><strong id="security-health-score">—</strong></div></div>
+          </article>
+
+          <div id="security-profile-grid" class="security-profile-grid" aria-label="Perfiles de seguridad disponibles">
+            <article class="security-profile-card profile-lite" data-profile-card="lite">
+              <div class="profile-index">01</div><div><div class="eyebrow">BAJO IMPACTO</div><h4>Lite · Pasivo</h4><p>Bloquea riesgos evidentes, restaura daños y avisa sin bans, kicks, timeouts ni strikes automáticos.</p></div>
+              <ul><li>Umbrales amplios</li><li>Sin sanciones automáticas</li><li>Alertas y restauración</li></ul>
+              <button class="button ghost" type="button" data-security-profile="lite" aria-pressed="false" disabled>Activar Lite</button>
+            </article>
+            <article class="security-profile-card profile-intermediate" data-profile-card="intermediate">
+              <div class="profile-index">02</div><div><div class="eyebrow">RECOMENDADO</div><h4>Intermedio</h4><p>Prevención activa con advertencias, timeout progresivo y neutralización tras acciones repetidas.</p></div>
+              <ul><li>Respuesta escalonada</li><li>Restauración automática</li><li>Menos falsos positivos</li></ul>
+              <button class="button primary" type="button" data-security-profile="intermediate" aria-pressed="false" disabled>Activar Intermedio</button>
+            </article>
+            <article class="security-profile-card profile-emergency" data-profile-card="emergency">
+              <div class="profile-index">03</div><div><div class="eyebrow">ATAQUE EN CURSO</div><h4>Emergencia</h4><p>Bloquea nuevas entradas, activa todos los filtros y neutraliza desde la primera acción destructiva.</p></div>
+              <ul><li>Lockdown de entradas</li><li>Umbrales mínimos</li><li>Respuesta estricta</li></ul>
+              <button class="button danger" type="button" data-security-profile="emergency" aria-pressed="false" disabled>Activar Emergencia</button>
+            </article>
+          </div>
+          <p id="security-profile-access-note" class="security-access-note">Comprobando permisos para cambiar el perfil global.</p>
+
+          <div class="security-module-overview">
+            <article class="security-module-card" data-permission="antiraid"><div class="security-module-symbol">AR</div><div><span>Anti-Raid</span><strong id="security-antiraid-state">Cargando</strong><small id="security-antiraid-detail">Vigilancia de entradas y acciones masivas.</small></div><span id="antiraid-live-badge" class="badge neutral">—</span></article>
+            <article class="security-module-card" data-permission="antinuke"><div class="security-module-symbol">AN</div><div><span>Anti-Nuke</span><strong id="security-antinuke-state">Cargando</strong><small id="security-antinuke-detail">Protección y restauración de estructura.</small></div><span id="antinuke-live-badge" class="badge neutral">—</span></article>
+            <article class="security-module-card" data-permission="automod"><div class="security-module-symbol">AM</div><div><span>AutoMod</span><strong id="security-automod-state">Cargando</strong><small id="security-automod-detail">Filtros y sanciones progresivas.</small></div><span id="automod-live-badge" class="badge neutral">—</span></article>
+          </div>
+
+          <div class="security-diagnostics-grid">
+            <article class="panel-card security-health-card"><div class="card-header"><div><div class="eyebrow">COMPROBACIÓN OPERATIVA</div><h3>Salud de la protección</h3><p class="muted helper-copy">Revisa permisos, jerarquía, logs y copia Anti-Nuke.</p></div></div><div id="security-health-list" class="security-health-list"><p class="empty-state">Ejecutando diagnóstico...</p></div></article>
+            <article class="panel-card security-coverage-card"><div class="card-header"><div><div class="eyebrow">COBERTURA</div><h3>Defensas coordinadas</h3></div></div><div class="security-coverage-list"><div><span>01</span><p><strong>Entradas y bots</strong><small>Ritmo de joins, antigüedad, bots no autorizados y lockdown.</small></p></div><div><span>02</span><p><strong>Estructura y privilegios</strong><small>Canales, roles, emojis, webhooks y permisos peligrosos.</small></p></div><div><span>03</span><p><strong>Contenido y flood</strong><small>Spam, menciones, invites, enlaces, archivos y palabras.</small></p></div><div><span>04</span><p><strong>Recuperación</strong><small>Snapshots, restauración e historial de incidentes.</small></p></div></div></article>
+          </div>
+
+          <div class="subpage-tabs security-module-tabs" role="tablist" aria-label="Configuración avanzada de seguridad">
+            <button class="subpage-tab active" type="button" role="tab" aria-selected="true" data-security-view="antiraid" data-permission="antiraid">Anti-Raid</button>
+            <button class="subpage-tab" type="button" role="tab" aria-selected="false" data-security-view="antinuke" data-permission="antinuke">Anti-Nuke</button>
+            <button class="subpage-tab" type="button" role="tab" aria-selected="false" data-security-view="automod" data-permission="automod">AutoMod</button>
+          </div>
+
+          <div id="security-view-antiraid" class="security-module-panel active" data-permission="antiraid">
+            <form id="antiraid-form" class="panel-card settings-form security-settings-card">
+              <div class="card-header"><div><div class="eyebrow">ENTRADAS Y ABUSO MASIVO</div><h3>Anti-Raid avanzado</h3><p class="muted helper-copy">Guardar manualmente convierte el perfil en Personalizado.</p></div></div>
+              <div class="setting-row featured"><div><strong>Protección principal</strong><p>Activa los detectores de entradas, bots, flood y acciones masivas.</p></div><label class="switch"><input name="enabled" type="checkbox"><span></span></label></div>
+              <div class="form-grid three">
+                <label class="field"><span>Nivel de respuesta</span><select name="responseMode"><option value="passive">Pasivo · sin sanción</option><option value="balanced">Equilibrado</option><option value="strict">Estricto</option></select></label>
+                <label class="field"><span>Sanción automática</span><select name="action"><option value="ban">Banear</option><option value="kick">Expulsar</option><option value="timeout">Aislar (timeout)</option></select></label>
+                <label class="field"><span>Entradas máximas</span><input name="joinThreshold" type="number" min="2" max="100" required></label>
+                <label class="field"><span>Ventana de entradas (s)</span><input name="joinWindowSeconds" type="number" min="1" max="300" required></label>
+                <label class="field"><span>Duración modo raid (min)</span><input name="raidModeMinutes" type="number" min="1" max="1440" required></label>
+                <label class="field"><span>Edad mínima de cuenta (h)</span><input name="minAccountAgeHours" type="number" min="0" max="8760" required></label>
+                <label class="field"><span>Menciones máximas</span><input name="massMentionThreshold" type="number" min="2" max="100" required></label>
+                <label class="field"><span>Mensajes para detectar spam</span><input name="spamMessageThreshold" type="number" min="3" max="100" required></label>
+                <label class="field"><span>Ventana de spam (s)</span><input name="spamWindowSeconds" type="number" min="1" max="300" required></label>
+                <label class="field"><span>Mensajes duplicados</span><input name="duplicateMessageThreshold" type="number" min="2" max="20" required></label>
+                <label class="field"><span>Enlaces máximos por mensaje</span><input name="maxLinksPerMessage" type="number" min="1" max="20" required></label>
+                <label class="field"><span>Escalado por reincidencia (min)</span><input name="spamEscalationMinutes" type="number" min="1" max="1440" required></label>
+                <label class="field"><span>Acciones destructivas</span><input name="destructiveThreshold" type="number" min="2" max="50" required></label>
+                <label class="field"><span>Ventana destructiva (s)</span><input name="destructiveWindowSeconds" type="number" min="1" max="300" required></label>
+                <label class="field"><span>Duración timeout (min)</span><input name="timeoutMinutes" type="number" min="1" max="40320" required></label>
+              </div>
+              <div class="form-grid two"><label class="check-row"><input name="blockUnauthorizedBots" type="checkbox"><span><strong>Bloquear bots no autorizados</strong><small>Retira el bot añadido y analiza al responsable.</small></span></label><label class="check-row"><input name="spamWarningEnabled" type="checkbox"><span><strong>Aviso antes de sancionar spam</strong><small>Advierte y escala si reincide.</small></span></label></div>
+              <label class="field"><span>Mensaje de advertencia de spam</span><textarea name="spamWarningMessage" rows="3" maxlength="180" required></textarea></label>
+              <label class="field"><span>Whitelist · IDs separados por coma</span><textarea name="trustedUserIds" rows="3" placeholder="123456789012345678, 987654321098765432"></textarea><small>El dueño del servidor y el bot siempre están protegidos.</small></label>
+              <div class="form-actions"><span id="antiraid-save-state" class="save-state"></span><button class="button primary" type="submit">Guardar Anti-Raid</button></div>
+            </form>
+          </div>
+
+          <div id="security-view-antinuke" class="security-module-panel" data-permission="antinuke">
+            <form id="antinuke-form" class="panel-card settings-form security-settings-card">
+              <div class="card-header"><div><div class="eyebrow">ESTRUCTURA Y PRIVILEGIOS</div><h3>Anti-Nuke avanzado</h3><p class="muted helper-copy">El modo Emergencia global solo se activa desde las tarjetas superiores.</p></div></div>
+              <div class="setting-row featured"><div><strong>Protección Anti-Nuke</strong><p>Vigila canales, roles, emojis, permisos y responsables mediante auditoría.</p></div><label class="switch"><input name="enabled" type="checkbox"><span></span></label></div>
+              <div class="form-grid two">
+                <label class="field"><span>Nivel de respuesta</span><select name="responseMode"><option value="passive">Pasivo · restaurar sin sanción</option><option value="balanced">Equilibrado</option><option value="strict">Estricto</option></select></label>
+                <label class="field"><span>Acciones antes de neutralizar</span><input name="actionThreshold" type="number" min="1" max="20" required></label>
+                <label class="field"><span>Ventana de acciones (s)</span><input name="actionWindowSeconds" type="number" min="3" max="300" required></label>
+                <label class="check-row"><input name="autoRestore" type="checkbox"><span><strong>Restauración automática</strong><small>Recrea recursos usando la última copia.</small></span></label>
+                <label class="check-row"><input name="removeDangerousRoles" type="checkbox"><span><strong>Retirar roles peligrosos</strong><small>Quita privilegios antes de sancionar.</small></span></label>
+              </div>
+              <div class="form-actions"><span id="antinuke-save-state" class="save-state"></span><button class="button primary" type="submit">Guardar Anti-Nuke</button></div>
+            </form>
+            <div class="security-grid">
+              <article class="panel-card snapshot-card"><div class="card-header"><div><div class="eyebrow">COPIA DE SEGURIDAD</div><h3>Recursos protegidos</h3></div><button id="refresh-security-snapshot" class="button ghost" type="button">Actualizar copia</button></div><div class="snapshot-stats"><div><strong id="snapshot-channels">0</strong><small>Canales</small></div><div><strong id="snapshot-roles">0</strong><small>Roles</small></div><div><strong id="snapshot-emojis">0</strong><small>Emojis</small></div></div><p id="snapshot-date" class="muted helper-copy">Sin copia registrada.</p></article>
+              <article class="panel-card"><div class="card-header"><div><div class="eyebrow">INCIDENTES</div><h3>Actividad reciente</h3></div></div><div id="antinuke-incidents" class="incident-list"><p class="empty-state">No hay incidentes.</p></div></article>
             </div>
-            <div class="form-grid two">
-              <label class="field"><span>Palabras prohibidas · una por línea</span><textarea name="blockedWords" rows="6" maxlength="5100" placeholder="palabra\nfrase bloqueada"></textarea></label>
-              <div class="stack"><label class="field"><span>Dominios permitidos · uno por línea</span><textarea name="allowedDomains" rows="3" maxlength="10000" placeholder="youtube.com\nejemplo.com"></textarea></label><label class="field"><span>Extensiones sospechosas</span><textarea name="suspiciousExtensions" rows="2" maxlength="550" placeholder="exe, bat, scr"></textarea></label></div>
-            </div>
-            <div class="divider"></div>
-            <div><div class="eyebrow">SANCIONES PROGRESIVAS</div><p class="muted helper-copy">La primera infracción advierte; después se aplica timeout y finalmente la sanción elegida.</p></div>
-            <div class="form-grid three">
-              <label class="field"><span>Strike para timeout</span><input name="timeoutStrike" type="number" min="2" max="10" required></label>
-              <label class="field"><span>Strike para sanción final</span><input name="finalStrike" type="number" min="2" max="20" required></label>
-              <label class="field"><span>Ventana de strikes (h)</span><input name="strikeWindowHours" type="number" min="1" max="720" required></label>
-              <label class="field"><span>Duración timeout (min)</span><input name="timeoutMinutes" type="number" min="1" max="40320" required></label>
-              <label class="field"><span>Sanción final</span><select name="finalAction"><option value="ban">Banear</option><option value="kick">Expulsar</option><option value="timeout">Timeout</option></select></label>
-            </div>
-            <label class="field"><span>Mensaje de advertencia</span><textarea name="warningMessage" rows="3" maxlength="240" required></textarea></label>
-            <div class="form-grid two"><label class="field"><span>Canales ignorados · IDs</span><textarea name="ignoredChannelIds" rows="3" placeholder="123456789012345678"></textarea></label><label class="field"><span>Roles ignorados · IDs</span><textarea name="ignoredRoleIds" rows="3" placeholder="123456789012345678"></textarea></label></div>
-            <div class="form-actions"><span id="automod-save-state" class="save-state"></span><button id="clear-automod-strikes" class="button danger" type="button">Reiniciar strikes</button><button class="button primary" type="submit">Guardar AutoMod</button></div>
-          </form>
+          </div>
+
+          <div id="security-view-automod" class="security-module-panel" data-permission="automod">
+            <form id="automod-form" class="panel-card settings-form security-settings-card">
+              <div class="card-header"><div><div class="eyebrow">CONTENIDO Y FLOOD</div><h3>AutoMod avanzado</h3><p class="muted helper-copy">Lite elimina el contenido detectado y avisa sin crear strikes.</p></div></div>
+              <div class="setting-row featured"><div><strong>Protección AutoMod</strong><p>Analiza mensajes y archivos de miembros no confiables.</p></div><label class="switch"><input name="enabled" type="checkbox"><span></span></label></div>
+              <div class="form-grid three">
+                <label class="field"><span>Nivel de respuesta</span><select name="responseMode"><option value="passive">Pasivo · sin strikes</option><option value="balanced">Equilibrado</option><option value="strict">Estricto</option></select></label>
+                <label class="check-row"><input name="blockInvites" type="checkbox"><span><strong>Bloquear invitaciones</strong><small>Elimina invitaciones de Discord.</small></span></label>
+                <label class="check-row"><input name="blockUnauthorizedLinks" type="checkbox"><span><strong>Enlaces no autorizados</strong><small>Solo permite dominios de la whitelist.</small></span></label>
+                <label class="check-row"><input name="blockSuspiciousFiles" type="checkbox"><span><strong>Archivos sospechosos</strong><small>Bloquea extensiones configuradas.</small></span></label>
+                <label class="field"><span>Mayúsculas máximas (%)</span><input name="maxCapsPercent" type="number" min="50" max="100" required></label>
+                <label class="field"><span>Letras mínimas para medir</span><input name="capsMinimumLength" type="number" min="4" max="100" required></label>
+                <label class="field"><span>Emojis máximos</span><input name="maxEmojis" type="number" min="1" max="100" required></label>
+              </div>
+              <div class="form-grid two"><label class="field"><span>Palabras prohibidas · una por línea</span><textarea name="blockedWords" rows="6" maxlength="5100"></textarea></label><div class="stack"><label class="field"><span>Dominios permitidos · uno por línea</span><textarea name="allowedDomains" rows="3" maxlength="10000"></textarea></label><label class="field"><span>Extensiones sospechosas</span><textarea name="suspiciousExtensions" rows="2" maxlength="550"></textarea></label></div></div>
+              <div class="divider"></div>
+              <div><div class="eyebrow">RESPUESTA PROGRESIVA</div><p class="muted helper-copy">En Equilibrado y Estricto se registra, aísla y finalmente aplica la sanción seleccionada.</p></div>
+              <div class="form-grid three">
+                <label class="field"><span>Strike para timeout</span><input name="timeoutStrike" type="number" min="2" max="10" required></label>
+                <label class="field"><span>Strike para sanción final</span><input name="finalStrike" type="number" min="2" max="20" required></label>
+                <label class="field"><span>Ventana de strikes (h)</span><input name="strikeWindowHours" type="number" min="1" max="720" required></label>
+                <label class="field"><span>Duración timeout (min)</span><input name="timeoutMinutes" type="number" min="1" max="40320" required></label>
+                <label class="field"><span>Sanción final</span><select name="finalAction"><option value="ban">Banear</option><option value="kick">Expulsar</option><option value="timeout">Timeout</option></select></label>
+              </div>
+              <label class="field"><span>Mensaje de advertencia</span><textarea name="warningMessage" rows="3" maxlength="240" required></textarea></label>
+              <div class="form-grid two"><label class="field"><span>Canales ignorados · IDs</span><textarea name="ignoredChannelIds" rows="3"></textarea></label><label class="field"><span>Roles ignorados · IDs</span><textarea name="ignoredRoleIds" rows="3"></textarea></label></div>
+              <div class="form-actions"><span id="automod-save-state" class="save-state"></span><button id="clear-automod-strikes" class="button danger" type="button">Reiniciar strikes</button><button class="button primary" type="submit">Guardar AutoMod</button></div>
+            </form>
+          </div>
         </section>
 
         <section id="page-tickets" class="page">

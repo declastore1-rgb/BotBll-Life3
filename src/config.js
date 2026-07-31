@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { defaultSecuritySettings } from './securityProfiles.js';
 
 const integer = (name, fallback, minimum = 1) => {
   const value = Number.parseInt(process.env[name] ?? String(fallback), 10);
@@ -20,7 +21,7 @@ const required = (name) => {
   return value;
 };
 
-const antiRaidAction = (process.env.ANTIRAID_ACTION ?? 'ban').toLowerCase();
+const antiRaidAction = (process.env.ANTIRAID_ACTION ?? 'timeout').toLowerCase();
 if (!['ban', 'kick', 'timeout'].includes(antiRaidAction)) {
   throw new Error('ANTIRAID_ACTION debe ser ban, kick o timeout.');
 }
@@ -31,8 +32,12 @@ if (sessionSecret.length < 32) {
 }
 
 export const defaultGuildSettings = Object.freeze({
+  security: defaultSecuritySettings,
   antiRaid: Object.freeze({
     enabled: boolean('ANTIRAID_ENABLED', true),
+    responseMode: 'balanced',
+    lockdownNewJoins: false,
+    blockUnauthorizedBots: true,
     action: antiRaidAction,
     trustedUserIds: (process.env.TRUSTED_USER_IDS ?? '')
       .split(',')
@@ -56,6 +61,7 @@ export const defaultGuildSettings = Object.freeze({
   }),
   antiNuke: Object.freeze({
     enabled: true,
+    responseMode: 'balanced',
     autoRestore: true,
     removeDangerousRoles: true,
     emergencyMode: false,
@@ -66,6 +72,7 @@ export const defaultGuildSettings = Object.freeze({
   }),
   autoMod: Object.freeze({
     enabled: true,
+    responseMode: 'balanced',
     blockInvites: true,
     blockUnauthorizedLinks: false,
     blockSuspiciousFiles: true,
@@ -77,10 +84,10 @@ export const defaultGuildSettings = Object.freeze({
     maxEmojis: 10,
     warningMessage: 'Tu mensaje incumple las reglas. Si continúas recibirás una sanción progresiva.',
     timeoutStrike: 2,
-    finalStrike: 3,
+    finalStrike: 4,
     strikeWindowHours: 24,
     timeoutMinutes: 30,
-    finalAction: 'ban',
+    finalAction: 'timeout',
     ignoredChannelIds: [],
     ignoredRoleIds: [],
     strikes: [],

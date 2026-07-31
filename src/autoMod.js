@@ -63,13 +63,17 @@ export class AutoMod {
   }
 
   status(guildId) {
-    const settings = this.settings(guildId);
+    const guildSettings = this.store.getGuildSettings(guildId);
+    const settings = guildSettings.autoMod;
     const now = Date.now();
+    const profileActivatedAt = Date.parse(guildSettings.security?.activatedAt ?? '');
     const activeStrikes = settings.strikes.filter(
-      (item) => now - item.lastAt <= settings.strikeWindowHours * 3_600_000,
+      (item) => now - item.lastAt <= settings.strikeWindowHours * 3_600_000
+        && (!Number.isFinite(profileActivatedAt) || item.lastAt >= profileActivatedAt),
     );
     return {
       enabled: settings.enabled,
+      responseMode: settings.responseMode,
       activeStrikes: activeStrikes.length,
       blockedWords: settings.blockedWords.length,
       finalAction: settings.finalAction,
@@ -139,60 +143,104 @@ export class AutoMod {
     if (warning) setTimeout(() => warning.delete().catch(() => null), 12_000).unref();
   }
 
+  async warnPassive(message, settings) {
+    const warning = await message.channel.send({
+      content: `<@${message.author.id}> ${settings.warningMessage} Modo Lite: no se añadió ninguna sanción.`,
+      allowedMentions: { users: [message.author.id], roles: [], parse: [] },
+    }).catch(() => null);
+    if (warning) setTimeout(() => warning.delete().catch(() => null), 12_000).unref();
+  }
+
+  async handlePassiveDetection(message, detection, settings) {
+    await this.warnPassive(message, settings);
+    await this.antiRaid.log(
+      message.guild,
+      'AutoMod · Prevención Lite',
+      `<@${message.author.id}>: **${detection.rule}**. ${detection.detail}\nEl contenido fue retirado sin añadir strikes ni sanciones.`,
+      0xfee75c,
+    );
+  }
+
   async applyProgressiveAction(message, detection, settings, strike) {
+    const currentSettings = this.settings(message.guild.id);
+    if (!currentSettings.enabled) {
+      return { applied: false, cancelled: true, finalStrike: currentSettings.finalStrike };
+    }
+    if (currentSettings.responseMode === 'passive') {
+      await this.handlePassiveDetection(message, detection, currentSettings);
+      return { applied: false, cancelled: true, finalStrike: currentSettings.finalStrike };
+    }
+    settings = currentSettings;
     const reason = `AutoMod: ${detection.rule} (${strike.count}/${settings.finalStrike})`;
     if (strike.count >= settings.finalStrike) {
       const antiRaidSettings = this.antiRaid.settings(message.guild.id);
-      return this.antiRaid.applyAction(message.member, reason, {
+      const applied = await this.antiRaid.applyAction(message.member, reason, {
         ...antiRaidSettings,
+        sourceModule: 'automod',
+        responseMode: settings.responseMode,
         action: settings.finalAction,
         timeoutMinutes: settings.timeoutMinutes,
       });
+      return { applied, cancelled: false, finalStrike: settings.finalStrike };
     }
     if (strike.count >= settings.timeoutStrike && message.member?.moderatable) {
-      const timedOut = await message.member
+      const applied = await message.member
         .timeout(settings.timeoutMinutes * 60_000, `BLL ${reason}`)
         .then(() => true)
         .catch(() => false);
-      if (!timedOut) await this.warn(message, settings, strike);
-      return timedOut;
+      if (!applied) await this.warn(message, settings, strike);
+      return { applied, cancelled: false, finalStrike: settings.finalStrike };
     }
     await this.warn(message, settings, strike);
-    return false;
+    return { applied: false, cancelled: false, finalStrike: settings.finalStrike };
   }
 
   async processMessage(message) {
-    const settings = this.settings(message.guild.id);
+    let settings = this.settings(message.guild.id);
     if (!settings.enabled || this.isIgnored(message, settings)) return;
     if (this.antiRaid.isTrusted(message.guild, message.author.id)) return;
     const detection = this.detect(message, settings);
     if (!detection) return;
 
     await message.delete().catch(() => null);
+    settings = this.settings(message.guild.id);
+    if (!settings.enabled) return;
+    if (settings.responseMode === 'passive') {
+      await this.handlePassiveDetection(message, detection, settings);
+      return;
+    }
     const strike = await this.store.recordAutoModStrike(
       message.guild.id,
       message.author.id,
       detection.rule,
       settings.strikeWindowHours,
     );
+    if (strike.skipped) {
+      const currentSettings = this.settings(message.guild.id);
+      if (currentSettings.enabled && currentSettings.responseMode === 'passive') {
+        await this.handlePassiveDetection(message, detection, currentSettings);
+      }
+      return;
+    }
     const alreadyFinalized = Boolean(
       strike.finalizedAt
       && Date.now() - strike.finalizedAt <= settings.strikeWindowHours * 3_600_000,
     );
-    const applied = alreadyFinalized
-      ? false
+    const outcome = alreadyFinalized
+      ? { applied: false, cancelled: false, finalStrike: settings.finalStrike }
       : await this.applyProgressiveAction(message, detection, settings, strike);
-    if (applied && strike.count >= settings.finalStrike) {
+    if (outcome.cancelled) return;
+    if (outcome.applied && strike.count >= outcome.finalStrike) {
       await this.store.markAutoModFinalized(message.guild.id, message.author.id);
     }
     const progression = alreadyFinalized
       ? 'La sanción final ya había sido aplicada; la infracción quedó registrada.'
-      : `Advertencia ${strike.count}/${settings.finalStrike}.`;
+      : `Advertencia ${strike.count}/${outcome.finalStrike}.`;
     await this.antiRaid.log(
       message.guild,
-      applied ? 'AutoMod · Usuario sancionado' : 'AutoMod · Mensaje bloqueado',
+      outcome.applied ? 'AutoMod · Usuario sancionado' : 'AutoMod · Mensaje bloqueado',
       `<@${message.author.id}>: **${detection.rule}**. ${detection.detail}\n${progression}`,
-      applied ? 0xed4245 : 0xfee75c,
+      outcome.applied ? 0xed4245 : 0xfee75c,
     );
   }
 }

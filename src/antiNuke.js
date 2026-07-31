@@ -115,12 +115,31 @@ export class AntiNuke {
       this.enqueueDeleted(emoji.guild, 'emoji', emoji.id, AuditLogEvent.EmojiDelete);
     });
 
-    this.client.on(Events.ChannelCreate, (channel) => this.onChanged(channel.guild, AuditLogEvent.ChannelCreate, channel.id));
-    this.client.on(Events.ChannelUpdate, (_oldValue, channel) => this.onChanged(channel.guild, AuditLogEvent.ChannelUpdate, channel.id));
-    this.client.on(Events.GuildRoleCreate, (role) => this.onChanged(role.guild, AuditLogEvent.RoleCreate, role.id));
-    this.client.on(Events.GuildRoleUpdate, (_oldValue, role) => this.onChanged(role.guild, AuditLogEvent.RoleUpdate, role.id));
-    this.client.on(Events.GuildEmojiCreate, (emoji) => this.onChanged(emoji.guild, AuditLogEvent.EmojiCreate, emoji.id));
-    this.client.on(Events.GuildEmojiUpdate, (_oldValue, emoji) => this.onChanged(emoji.guild, AuditLogEvent.EmojiUpdate, emoji.id));
+    this.client.on(Events.ChannelCreate, (channel) => {
+      this.onChanged(channel.guild, AuditLogEvent.ChannelCreate, channel.id, 'channel', 'canal creado').catch(console.error);
+    });
+    this.client.on(Events.ChannelUpdate, (_oldValue, channel) => {
+      this.onChanged(channel.guild, AuditLogEvent.ChannelUpdate, channel.id, 'channel', 'canal actualizado').catch(console.error);
+    });
+    this.client.on(Events.GuildRoleCreate, (role) => {
+      this.onChanged(role.guild, AuditLogEvent.RoleCreate, role.id, 'role', 'rol creado').catch(console.error);
+    });
+    this.client.on(Events.GuildRoleUpdate, (oldValue, role) => {
+      this.onChanged(
+        role.guild,
+        AuditLogEvent.RoleUpdate,
+        role.id,
+        'role',
+        'rol actualizado',
+        oldValue,
+      ).catch(console.error);
+    });
+    this.client.on(Events.GuildEmojiCreate, (emoji) => {
+      this.onChanged(emoji.guild, AuditLogEvent.EmojiCreate, emoji.id, 'emoji', 'emoji creado').catch(console.error);
+    });
+    this.client.on(Events.GuildEmojiUpdate, (_oldValue, emoji) => {
+      this.onChanged(emoji.guild, AuditLogEvent.EmojiUpdate, emoji.id, 'emoji', 'emoji actualizado').catch(console.error);
+    });
     this.client.on(Events.GuildMemberUpdate, (oldMember, member) => {
       const rolesChanged = oldMember.roles.cache.size !== member.roles.cache.size
         || oldMember.roles.cache.some((_role, id) => !member.roles.cache.has(id));
@@ -161,6 +180,7 @@ export class AntiNuke {
     const settings = this.settings(guildId);
     return {
       enabled: settings.enabled,
+      responseMode: settings.responseMode,
       emergencyMode: settings.emergencyMode,
       autoRestore: settings.autoRestore,
       snapshots: {
@@ -171,6 +191,12 @@ export class AntiNuke {
       },
       incidents: settings.incidents.slice(0, 20),
     };
+  }
+
+  clearRuntimeState(guildId) {
+    for (const key of this.actions.keys()) {
+      if (key.startsWith(`${guildId}:`)) this.actions.delete(key);
+    }
   }
 
   enqueueDeleted(guild, resourceType, targetId, auditType) {
@@ -185,11 +211,109 @@ export class AntiNuke {
     });
   }
 
-  async onChanged(guild, auditType, targetId) {
+  async onChanged(guild, auditType, targetId, resourceType, actionLabel, previousResource = null) {
     if (!guild || !this.settings(guild.id).enabled || this.isRestoring(guild.id)) return;
     const entry = await this.findAuditEntry(guild, auditType, targetId, 3);
     if (this.isRestoring(guild.id)) return;
-    if (entry && this.antiRaid.isTrusted(guild, entry.executorId)) this.scheduleSnapshot(guild);
+    let settings = this.settings(guild.id);
+    if (!settings.enabled || !entry) return;
+    if (this.antiRaid.isTrusted(guild, entry.executorId)) {
+      this.scheduleSnapshot(guild);
+      return;
+    }
+
+    const resource = liveResource(guild, resourceType, targetId);
+    const dangerousRoleEscalation = resourceType === 'role'
+      && DANGEROUS_PERMISSIONS.some((permission) => (
+        resource?.permissions?.has(permission)
+        && !previousResource?.permissions?.has(permission)
+      ));
+    const dangerousEveryoneUpdate = dangerousRoleEscalation && targetId === guild.id;
+    let resourceReverted = false;
+    let revertError = '';
+    if (dangerousRoleEscalation) {
+      try {
+        if (!resource?.setPermissions) throw new Error('El rol ya no está disponible.');
+        let safePermissions = previousResource?.permissions?.bitfield ?? resource.permissions.bitfield;
+        if (!previousResource) {
+          for (const permission of DANGEROUS_PERMISSIONS) safePermissions &= ~permission;
+        }
+        await resource.setPermissions(
+          safePermissions,
+          'BLL Anti-Nuke: reversión de permisos peligrosos',
+        );
+        resourceReverted = true;
+      } catch (error) {
+        revertError = error.message;
+      }
+    }
+
+    settings = this.settings(guild.id);
+    const count = dangerousRoleEscalation && settings.enabled && settings.responseMode !== 'passive'
+      ? this.trackAction(guild.id, entry.executorId, settings.actionWindowSeconds)
+      : 0;
+    const threshold = settings.emergencyMode || dangerousEveryoneUpdate ? 1 : settings.actionThreshold;
+    let neutralization = {
+      rolesRemoved: 0,
+      rolesError: '',
+      sanctioned: false,
+      cancelled: false,
+    };
+    if (settings.enabled && dangerousRoleEscalation && count >= threshold) {
+      neutralization = await this.neutralize(
+        guild,
+        entry.executorId,
+        settings,
+        dangerousEveryoneUpdate
+          ? 'permisos peligrosos concedidos a @everyone'
+          : 'permisos peligrosos añadidos a un rol',
+      );
+      if (!neutralization.cancelled) {
+        this.antiRaid.activateRaidMode(
+          guild,
+          `Anti-Nuke detectó una escalada de permisos de <@${entry.executorId}>.`,
+        );
+      }
+    }
+    const actorNeutralized = neutralization.rolesRemoved > 0 || neutralization.sanctioned;
+    const restoreError = dangerousRoleEscalation
+      ? revertError || (resourceReverted ? '' : 'No se pudo revertir la escalada de permisos.')
+      : 'Cambio estructural observado sin indicadores destructivos.';
+    await this.store.recordAntiNukeIncident(guild.id, {
+      eventKind: 'change',
+      resourceType,
+      resourceId: targetId,
+      resourceName: resource?.name ?? targetId,
+      executorId: entry.executorId,
+      attributionMissing: false,
+      actionCount: count,
+      restored: resourceReverted,
+      dangerousChange: dangerousRoleEscalation,
+      resourceReverted,
+      restoreError,
+      relationErrors: [],
+      rolesRemoved: neutralization.rolesRemoved,
+      rolesError: neutralization.rolesError,
+      sanctioned: neutralization.sanctioned,
+      emergencyMode: settings.emergencyMode,
+      responseMode: settings.responseMode,
+    });
+    const title = resourceReverted && actorNeutralized
+      ? 'Anti-Nuke · Escalada revertida y responsable neutralizado'
+      : resourceReverted
+        ? 'Anti-Nuke · Permisos peligrosos revertidos'
+        : dangerousRoleEscalation
+          ? 'Anti-Nuke · No se pudo revertir la escalada'
+          : 'Anti-Nuke · Cambio estructural observado';
+    const countDetail = dangerousRoleEscalation
+      ? ` Acciones peligrosas: ${count}/${threshold}.`
+      : ' No se detectaron permisos peligrosos ni eliminación de recursos.';
+    await this.antiRaid.log(
+      guild,
+      title,
+      `<@${entry.executorId}>: **${actionLabel}**.${countDetail}${revertError ? ` Error: ${revertError}` : ''}`,
+      dangerousRoleEscalation && !resourceReverted ? 0xed4245 : resourceReverted ? 0x57f287 : 0x5865f2,
+    );
   }
 
   async onMemberRolesChanged(member) {
@@ -420,16 +544,42 @@ export class AntiNuke {
   }
 
   async neutralize(guild, executorId, settings, reason) {
+    let currentSettings = this.settings(guild.id);
+    if (!currentSettings.enabled || currentSettings.responseMode === 'passive') {
+      return { rolesRemoved: 0, rolesError: '', sanctioned: false, cancelled: true };
+    }
     const member = await guild.members.fetch(executorId).catch(() => null);
-    if (!member) return { rolesRemoved: 0, rolesError: 'Miembro no disponible.', sanctioned: false };
+    if (!member) {
+      return {
+        rolesRemoved: 0,
+        rolesError: 'Miembro no disponible.',
+        sanctioned: false,
+        cancelled: false,
+      };
+    }
+    currentSettings = this.settings(guild.id);
+    if (!currentSettings.enabled || currentSettings.responseMode === 'passive') {
+      return { rolesRemoved: 0, rolesError: '', sanctioned: false, cancelled: true };
+    }
+    settings = currentSettings;
     let rolesRemoved = 0;
     let rolesError = '';
     if (settings.removeDangerousRoles) {
       try { rolesRemoved = await this.removeDangerousRoles(member); }
       catch (error) { rolesError = error.message; }
     }
-    const sanctioned = await this.antiRaid.applyAction(member, reason);
-    return { rolesRemoved, rolesError, sanctioned };
+    currentSettings = this.settings(guild.id);
+    if (!currentSettings.enabled || currentSettings.responseMode === 'passive') {
+      return { rolesRemoved, rolesError, sanctioned: false, cancelled: true };
+    }
+    settings = currentSettings;
+    const antiRaidSettings = this.antiRaid.settings(guild.id);
+    const sanctioned = await this.antiRaid.applyAction(member, reason, {
+      ...antiRaidSettings,
+      sourceModule: 'antinuke',
+      responseMode: settings.responseMode,
+    });
+    return { rolesRemoved, rolesError, sanctioned, cancelled: false };
   }
 
   async onDeleted(guild, resourceType, targetId, auditType) {
@@ -462,20 +612,30 @@ export class AntiNuke {
       }
     }
 
-    const count = entry ? this.trackAction(guild.id, entry.executorId, settings.actionWindowSeconds) : 0;
-    const threshold = settings.emergencyMode ? 1 : settings.actionThreshold;
-    let neutralization = { rolesRemoved: 0, rolesError: '', sanctioned: false };
-    if (entry && count >= threshold) {
+    const responseSettings = this.settings(guild.id);
+    const count = entry && responseSettings.enabled && responseSettings.responseMode !== 'passive'
+      ? this.trackAction(guild.id, entry.executorId, responseSettings.actionWindowSeconds)
+      : 0;
+    const threshold = responseSettings.emergencyMode ? 1 : responseSettings.actionThreshold;
+    let neutralization = {
+      rolesRemoved: 0,
+      rolesError: '',
+      sanctioned: false,
+      cancelled: false,
+    };
+    if (entry && responseSettings.enabled && count >= threshold) {
       neutralization = await this.neutralize(
         guild,
         entry.executorId,
-        settings,
+        responseSettings,
         `${resourceType} eliminado sin autorización`,
       );
-      this.antiRaid.activateRaidMode(
-        guild,
-        `Anti-Nuke detectó eliminaciones destructivas de <@${entry.executorId}>.`,
-      );
+      if (!neutralization.cancelled) {
+        this.antiRaid.activateRaidMode(
+          guild,
+          `Anti-Nuke detectó eliminaciones destructivas de <@${entry.executorId}>.`,
+        );
+      }
     }
     const neutralized = neutralization.rolesRemoved > 0 || neutralization.sanctioned;
 
@@ -492,7 +652,8 @@ export class AntiNuke {
       rolesRemoved: neutralization.rolesRemoved,
       rolesError: neutralization.rolesError,
       sanctioned: neutralization.sanctioned,
-      emergencyMode: settings.emergencyMode,
+      emergencyMode: responseSettings.emergencyMode,
+      responseMode: responseSettings.responseMode,
     });
     const outcome = restored
       ? relationErrors.length ? `recreado con avisos: ${relationErrors.join(' ')}` : 'recurso restaurado'

@@ -131,7 +131,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setTitle('BLL $ LIFE · Estado Anti-Raid')
           .setDescription(status.enabled ? 'La protección está activa.' : 'La protección está desactivada.')
           .addFields(
-            { name: 'Modo raid', value: status.raidMode ? `Activo hasta <t:${Math.floor(status.raidModeUntil / 1_000)}:R>` : 'Inactivo', inline: true },
+            {
+              name: 'Modo raid',
+              value: status.lockdownNewJoins
+                ? 'Lockdown de Emergencia'
+                : status.raidMode
+                  ? `Activo hasta <t:${Math.floor(status.raidModeUntil / 1_000)}:R>`
+                  : 'Inactivo',
+              inline: true,
+            },
+            { name: 'Respuesta', value: status.responseMode, inline: true },
             { name: 'Sanción', value: status.action, inline: true },
             { name: 'Entradas', value: status.joins, inline: true },
             { name: 'Edad mínima', value: status.minimumAge, inline: true },

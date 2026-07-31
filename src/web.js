@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import helmet from 'helmet';
-import { ChannelType } from 'discord.js';
+import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import {
   clearSessionCookie,
   createSession,
@@ -16,6 +16,12 @@ import {
 import { config } from './config.js';
 import { buildClaimKeyPanel, syncClaimKeyPublishedPanels } from './claimKey.js';
 import { buildCustomEmbed } from './embeds.js';
+import {
+  getSecurityProfile,
+  isSecurityProfileId,
+  isSecurityResponseMode,
+  listSecurityProfiles,
+} from './securityProfiles.js';
 import { can, dashboardPermissions, toPublicClient, toPublicUser } from './store.js';
 import {
   buildPanel,
@@ -25,7 +31,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, '..', 'public');
-const DASHBOARD_VERSION = 'client-portal-20260729-10';
+const DASHBOARD_VERSION = 'client-portal-20260729-11';
 const loginAttempts = new Map();
 const passwordChangeAttempts = new Map();
 const passwordChangeInFlight = new Map();
@@ -199,9 +205,12 @@ function sanitizeExtraButtons(value, current, guild) {
 
 function sanitizeAntiRaid(body) {
   const patch = {};
-  if (body.enabled !== undefined) patch.enabled = cleanBoolean(body.enabled, undefined, 'enabled');
-  if (body.spamWarningEnabled !== undefined) {
-    patch.spamWarningEnabled = cleanBoolean(body.spamWarningEnabled, undefined, 'spamWarningEnabled');
+  for (const key of ['enabled', 'spamWarningEnabled', 'blockUnauthorizedBots']) {
+    if (body[key] !== undefined) patch[key] = cleanBoolean(body[key], undefined, key);
+  }
+  if (body.responseMode !== undefined) {
+    if (!isSecurityResponseMode(body.responseMode)) throw new Error('El nivel de respuesta Anti-Raid no es válido.');
+    patch.responseMode = body.responseMode;
   }
   if (body.spamWarningMessage !== undefined) patch.spamWarningMessage = cleanText(body.spamWarningMessage, undefined, 180);
   if (body.action !== undefined) {
@@ -252,8 +261,12 @@ function cleanList(value, field, maximumItems, maximumLength, validator = () => 
 
 function sanitizeAntiNuke(body) {
   const patch = {};
-  for (const key of ['enabled', 'autoRestore', 'removeDangerousRoles', 'emergencyMode']) {
+  for (const key of ['enabled', 'autoRestore', 'removeDangerousRoles']) {
     if (body[key] !== undefined) patch[key] = cleanBoolean(body[key], undefined, key);
+  }
+  if (body.responseMode !== undefined) {
+    if (!isSecurityResponseMode(body.responseMode)) throw new Error('El nivel de respuesta Anti-Nuke no es válido.');
+    patch.responseMode = body.responseMode;
   }
   for (const [key, minimum, maximum] of [
     ['actionThreshold', 1, 20],
@@ -269,6 +282,10 @@ function sanitizeAutoMod(body) {
   const patch = {};
   for (const key of ['enabled', 'blockInvites', 'blockUnauthorizedLinks', 'blockSuspiciousFiles']) {
     if (body[key] !== undefined) patch[key] = cleanBoolean(body[key], undefined, key);
+  }
+  if (body.responseMode !== undefined) {
+    if (!isSecurityResponseMode(body.responseMode)) throw new Error('El nivel de respuesta AutoMod no es válido.');
+    patch.responseMode = body.responseMode;
   }
   const numericFields = {
     maxCapsPercent: [50, 100],
@@ -316,6 +333,117 @@ function sanitizeAutoMod(body) {
     throw new Error('La sanción final debe ocurrir después del primer timeout.');
   }
   return patch;
+}
+
+const SECURITY_PERMISSIONS = Object.freeze(['antiraid', 'antinuke', 'automod']);
+
+function publicSecurityProfile(profileId) {
+  if (isSecurityProfileId(profileId)) {
+    const { settings: _settings, ...profile } = getSecurityProfile(profileId);
+    return profile;
+  }
+  return {
+    id: 'custom',
+    name: 'Personalizado',
+    tone: 'custom',
+    tagline: 'Configuración ajustada manualmente.',
+    description: 'Los parámetros actuales no corresponden exactamente a un perfil predefinido.',
+    safeguards: [],
+    moduleSummary: {},
+  };
+}
+
+function buildSecurityHealth(guild, settings) {
+  if (!guild) {
+    return {
+      score: 0,
+      checks: [{
+        id: 'discord',
+        label: 'Conexión con Discord',
+        status: 'critical',
+        detail: 'El servidor no está disponible para comprobar la protección.',
+      }],
+    };
+  }
+  const botMember = guild.members.me;
+  const requiredPermissions = [
+    ['Ver auditoría', PermissionFlagsBits.ViewAuditLog],
+    ['Gestionar canales', PermissionFlagsBits.ManageChannels],
+    ['Gestionar roles', PermissionFlagsBits.ManageRoles],
+    ['Gestionar webhooks', PermissionFlagsBits.ManageWebhooks],
+    ['Gestionar expresiones', PermissionFlagsBits.ManageGuildExpressions],
+    ['Banear miembros', PermissionFlagsBits.BanMembers],
+    ['Expulsar miembros', PermissionFlagsBits.KickMembers],
+    ['Aislar miembros', PermissionFlagsBits.ModerateMembers],
+  ];
+  const missingPermissions = requiredPermissions
+    .filter(([, permission]) => !botMember?.permissions.has(permission))
+    .map(([label]) => label);
+  const dangerousRolesAbove = botMember
+    ? guild.roles.cache.filter(
+      (role) => !role.managed
+        && role.id !== guild.id
+        && role.position >= botMember.roles.highest.position
+        && [PermissionFlagsBits.Administrator, PermissionFlagsBits.ManageGuild]
+          .some((permission) => role.permissions.has(permission)),
+    ).size
+    : 0;
+  const logChannel = settings.tickets.logChannelId
+    ? guild.channels.cache.get(settings.tickets.logChannelId)
+    : null;
+  const everyoneCanViewLogChannel = logChannel?.isTextBased()
+    ? logChannel.permissionsFor?.(guild.roles.everyone)?.has(PermissionFlagsBits.ViewChannel)
+    : null;
+  const privateLogChannel = logChannel?.isTextBased() && everyoneCanViewLogChannel === false;
+  const snapshot = settings.antiNuke.snapshot;
+  const checks = [
+    {
+      id: 'discord',
+      label: 'Conexión con Discord',
+      status: 'ok',
+      detail: `${guild.name} está disponible para protección en tiempo real.`,
+    },
+    {
+      id: 'permissions',
+      label: 'Permisos del bot',
+      status: missingPermissions.length ? 'critical' : 'ok',
+      detail: missingPermissions.length
+        ? `Faltan: ${missingPermissions.join(', ')}.`
+        : 'El bot tiene todos los permisos operativos requeridos.',
+    },
+    {
+      id: 'hierarchy',
+      label: 'Jerarquía de roles',
+      status: dangerousRolesAbove ? 'warning' : botMember ? 'ok' : 'critical',
+      detail: !botMember
+        ? 'No se pudo localizar al miembro del bot.'
+        : dangerousRolesAbove
+          ? `${dangerousRolesAbove} rol(es) peligroso(s) están por encima o al mismo nivel del bot.`
+          : 'El rol del bot puede actuar sobre los roles administrativos detectados.',
+    },
+    {
+      id: 'logs',
+      label: 'Canal privado de alertas',
+      status: privateLogChannel ? 'ok' : 'warning',
+      detail: privateLogChannel
+        ? `Las alertas se envían de forma privada a #${logChannel.name}.`
+        : logChannel?.isTextBased()
+          ? `#${logChannel.name} es visible para @everyone o no tiene privacidad verificable.`
+          : 'Configura un canal de logs privado desde Tickets.',
+    },
+    {
+      id: 'snapshot',
+      label: 'Copia Anti-Nuke',
+      status: snapshot.capturedAt ? 'ok' : 'warning',
+      detail: snapshot.capturedAt
+        ? `Última copia: ${snapshot.capturedAt}.`
+        : 'Todavía no existe una copia estructural completa.',
+    },
+  ];
+  return {
+    score: Math.round((checks.filter((check) => check.status === 'ok').length / checks.length) * 100),
+    checks,
+  };
 }
 
 function sanitizeTickets(body, current, guild) {
@@ -932,6 +1060,49 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
     return next();
   };
 
+  const requireAllPermissions = (...permissions) => (request, response, next) => {
+    if (
+      request.dashboardAuth.principalType !== 'staff'
+      || !permissions.every((permission) => can(request.dashboardAuth.user, permission))
+    ) {
+      return response.status(403).json({
+        error: 'Necesitas permisos de Anti-Raid, Anti-Nuke y AutoMod para cambiar el perfil global.',
+      });
+    }
+    return next();
+  };
+
+  const securityCenterPayload = (user) => {
+    const settings = store.getGuildSettings(config.guildId);
+    const security = store.getSecurityState(config.guildId);
+    const access = {
+      antiRaid: can(user, 'antiraid'),
+      antiNuke: can(user, 'antinuke'),
+      autoMod: can(user, 'automod'),
+    };
+    access.canActivateProfile = SECURITY_PERMISSIONS.every((permission) => can(user, permission));
+    const { snapshot: _snapshot, incidents: _incidents, ...antiNukeSettings } = settings.antiNuke;
+    const { strikes: _strikes, ...autoModSettings } = settings.autoMod;
+    return {
+      security,
+      activeProfile: publicSecurityProfile(security.profile),
+      profiles: listSecurityProfiles(),
+      access,
+      health: buildSecurityHealth(client.guilds.cache.get(config.guildId), settings),
+      modules: {
+        antiRaid: access.antiRaid
+          ? { settings: settings.antiRaid, status: antiRaid.status(config.guildId) }
+          : null,
+        antiNuke: access.antiNuke
+          ? { settings: antiNukeSettings, status: antiNuke.status(config.guildId) }
+          : null,
+        autoMod: access.autoMod
+          ? { settings: autoModSettings, status: autoMod.status(config.guildId) }
+          : null,
+      },
+    };
+  };
+
   app.get('/api/auth/session', authenticate, (request, response) => {
     const principal = request.dashboardAuth.principalType === 'staff'
       ? toPublicUser(request.dashboardAuth.user)
@@ -1069,6 +1240,7 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
       if (entry.module === 'AutoMod') return can(user, 'automod');
       if (entry.module === 'Tickets') return can(user, 'tickets');
       if (entry.module === 'Claim Key') return can(user, 'claimkey');
+      if (entry.module === 'Seguridad') return SECURITY_PERMISSIONS.some((permission) => can(user, permission));
       if (entry.module === 'Embeds') return can(user, 'embeds') && entry.actorId === user.id;
       if (entry.module === 'Clientes') return can(user, 'clients');
       return can(user, 'users');
@@ -1088,6 +1260,12 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
         ? { id: guild.id, name: guild.name, icon: guild.iconURL({ size: 128 }), members: guild.memberCount }
         : { id: config.guildId, name: 'Servidor no disponible', icon: null, members: 0 },
       stats: {
+        securityProfile: SECURITY_PERMISSIONS.some((permission) => can(user, permission))
+          ? settings.security.profile
+          : null,
+        securityProfileName: SECURITY_PERMISSIONS.some((permission) => can(user, permission))
+          ? publicSecurityProfile(settings.security.profile).name
+          : null,
         antiRaidEnabled: can(user, 'antiraid') ? settings.antiRaid.enabled : null,
         raidMode: can(user, 'antiraid') ? antiRaid.isRaidMode(config.guildId) : null,
         openTickets: can(user, 'tickets') ? ticketCount : null,
@@ -1122,6 +1300,65 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
     }));
     return response.json({ roles, categories, channels, emojis });
   });
+
+  app.get(
+    '/api/security',
+    requireAnyPermission(...SECURITY_PERMISSIONS),
+    (request, response) => response.json(securityCenterPayload(request.dashboardAuth.user)),
+  );
+
+  app.put(
+    '/api/security/profile',
+    requireAllPermissions(...SECURITY_PERMISSIONS),
+    async (request, response, next) => {
+      try {
+        const profileId = request.body?.profile;
+        if (!isSecurityProfileId(profileId)) {
+          throw new Error('El perfil de seguridad seleccionado no es válido.');
+        }
+        const guild = client.guilds.cache.get(config.guildId);
+        const current = store.getGuildSettings(config.guildId);
+        const needsInitialSnapshot = !current.antiNuke.snapshot.capturedAt;
+        await store.applySecurityProfile(
+          config.guildId,
+          profileId,
+          request.dashboardAuth.user,
+        );
+        antiRaid.clearRaidMode(config.guildId);
+        antiNuke.clearRuntimeState(config.guildId);
+        let snapshotWarning = '';
+        if (needsInitialSnapshot) {
+          if (!guild) {
+            snapshotWarning = 'La protección quedó activa, pero la copia Anti-Nuke sigue pendiente porque Discord no está conectado.';
+          } else {
+            try {
+              await guild.members.fetch();
+              await antiNuke.captureSnapshot(guild, { waitForIdle: true });
+            } catch (error) {
+              console.error('No se pudo crear la copia Anti-Nuke inicial después de activar el perfil:', error);
+              snapshotWarning = 'La protección quedó activa, pero no se pudo crear la copia Anti-Nuke inicial.';
+            }
+          }
+        }
+        if (guild) {
+          const profile = getSecurityProfile(profileId);
+          await antiRaid.log(
+            guild,
+            `Centro de Seguridad · ${profile.name}`,
+            profileId === 'emergency'
+              ? `Activado desde la web por **${request.dashboardAuth.user.username}**. Las nuevas entradas quedan bloqueadas hasta cambiar de perfil.`
+              : `Activado desde la web por **${request.dashboardAuth.user.username}**.`,
+            profileId === 'emergency' ? 0xed4245 : profileId === 'lite' ? 0xfee75c : 0x57f287,
+          );
+        }
+        const payload = securityCenterPayload(request.dashboardAuth.user);
+        if (snapshotWarning) payload.snapshotWarning = snapshotWarning;
+        response.json(payload);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
 
   app.get('/api/antiraid', requirePermission('antiraid'), (_request, response) => {
     response.json({
@@ -1168,6 +1405,7 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
         patch,
         request.dashboardAuth.user,
       );
+      antiNuke.clearRuntimeState(config.guildId);
       const { snapshot: _snapshot, incidents: _incidents, ...publicSettings } = settings;
       response.json({ settings: publicSettings, status: antiNuke.status(config.guildId) });
     } catch (error) { next(error); }
