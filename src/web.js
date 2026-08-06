@@ -31,7 +31,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, '..', 'public');
-const DASHBOARD_VERSION = 'client-portal-20260805-1';
+const DASHBOARD_VERSION = 'client-portal-20260805-2';
 const loginAttempts = new Map();
 const passwordChangeAttempts = new Map();
 const passwordChangeInFlight = new Map();

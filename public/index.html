@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#080d16">
-  <meta name="app-version" content="client-portal-20260805-1">
-  <link rel="icon" type="image/png" sizes="96x96" href="/assets/logo-bll-icon.png?v=client-portal-20260805-1">
-  <link rel="apple-touch-icon" href="/assets/logo-bll.png?v=client-portal-20260805-1">
+  <meta name="app-version" content="client-portal-20260805-2">
+  <link rel="icon" type="image/png" sizes="96x96" href="/assets/logo-bll-icon.png?v=client-portal-20260805-2">
+  <link rel="apple-touch-icon" href="/assets/logo-bll.png?v=client-portal-20260805-2">
   <title>BLL $ LIFE · Control Center</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=client-portal-20260805-1">
-  <script src="/assets/app.js?v=client-portal-20260805-1" defer></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=client-portal-20260805-2">
+  <script src="/assets/app.js?v=client-portal-20260805-2" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -34,7 +34,7 @@
           <span class="login-emblem-ring"></span>
           <span class="login-emblem-ring alt"></span>
           <span class="login-emblem-pulse"></span>
-          <img class="brand-logo" src="/assets/logo-bll.png?v=client-portal-20260805-1" alt="Logotipo de BLL $ LIFE" width="118" height="118" decoding="async" fetchpriority="high">
+          <img class="brand-logo" src="/assets/logo-bll.png?v=client-portal-20260805-2" alt="Logotipo de BLL $ LIFE" width="118" height="118" decoding="async" fetchpriority="high">
         </div>
         <div class="login-aside-copy">
           <div class="eyebrow">SECURITY CONSOLE</div>
@@ -80,15 +80,19 @@
   <div id="app-view" class="app-shell hidden">
     <aside id="sidebar" class="sidebar">
       <div class="sidebar-brand">
-        <img class="brand-logo" src="/assets/logo-bll.png?v=client-portal-20260805-1" alt="" width="42" height="42" decoding="async">
+        <img class="brand-logo" src="/assets/logo-bll.png?v=client-portal-20260805-2" alt="" width="42" height="42" decoding="async">
         <div><strong>BLL $ LIFE</strong><small>Control Center</small></div>
       </div>
       <nav class="nav-list" aria-label="Navegación principal">
+        <p class="nav-group-label">General</p>
         <button class="nav-item active" data-page="overview"><span class="nav-icon">◈</span><span>Resumen</span></button>
+        <p class="nav-group-label">Protección</p>
         <button class="nav-item" data-page="security" data-any-permission="antiraid,antinuke,automod"><span class="nav-icon">⬢</span><span>Centro de Seguridad</span></button>
+        <p class="nav-group-label">Operación</p>
         <button class="nav-item" data-page="tickets" data-permission="tickets"><span class="nav-icon">▱</span><span>Tickets</span></button>
         <button class="nav-item" data-page="claimkey" data-permission="claimkey"><span class="nav-icon">◇</span><span>Claim Key</span></button>
         <button class="nav-item" data-page="embeds" data-permission="embeds"><span class="nav-icon">▤</span><span>Embeds</span></button>
+        <p class="nav-group-label">Accesos</p>
         <button class="nav-item" data-page="clients" data-permission="clients"><span class="nav-icon">◫</span><span>Admin Clients</span></button>
         <button class="nav-item" data-page="users" data-permission="users"><span class="nav-icon">◎</span><span>Usuarios</span></button>
         <button class="nav-item" data-page="account"><span class="nav-icon">○</span><span>Mi cuenta</span></button>
@@ -103,20 +107,38 @@
     <div class="workspace">
       <header class="topbar">
         <button id="menu-button" class="menu-button" type="button" aria-label="Abrir menú">☰</button>
-        <div><div class="eyebrow">PANEL ADMINISTRATIVO</div><h2 id="page-title">Resumen</h2></div>
-        <div class="topbar-user"><div><strong id="current-username">—</strong><small id="current-role">Operador</small></div><div id="user-avatar" class="user-avatar">L</div></div>
+        <div class="topbar-heading"><div class="eyebrow">PANEL ADMINISTRATIVO</div><h2 id="page-title">Resumen</h2></div>
+        <div class="topbar-tools">
+          <button id="command-trigger" class="command-trigger" type="button" aria-label="Abrir paleta de comandos">
+            <span aria-hidden="true">⌕</span><span class="command-trigger-label">Buscar sección</span><kbd>Ctrl K</kbd>
+          </button>
+          <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Cambiar tema">
+            <span class="theme-toggle-moon" aria-hidden="true">◑</span><span class="theme-toggle-sun" aria-hidden="true">☀</span>
+          </button>
+          <div class="topbar-user"><div><strong id="current-username">—</strong><small id="current-role">Operador</small></div><div id="user-avatar" class="user-avatar">L</div></div>
+        </div>
       </header>
 
       <div class="content">
         <section id="page-overview" class="page active">
           <div class="hero-card">
-            <div><div class="eyebrow">ESTADO GENERAL</div><h3>Todo bajo control<span class="accent-dot">.</span></h3><p id="hero-description" class="muted">Sincronizando con Discord...</p></div>
-            <div class="shield-visual"><div class="shield-ring"></div><div class="shield-ring inner"></div><div class="shield-core"><img class="brand-logo" src="/assets/logo-bll.png?v=client-portal-20260805-1" alt="" width="96" height="96" decoding="async"></div></div>
+            <div class="hero-copy">
+              <div class="eyebrow">ESTADO GENERAL</div>
+              <h3>Todo bajo control<span class="accent-dot">.</span></h3>
+              <p id="hero-description" class="muted">Sincronizando con Discord...</p>
+              <div class="hero-meta">
+                <span class="hero-chip"><span id="hero-status-dot" class="status-dot"></span><strong id="hero-connection">Conectando</strong></span>
+                <span class="hero-chip"><span>Servidor</span><strong id="hero-guild">—</strong></span>
+                <span class="hero-chip"><span>Latencia</span><strong id="hero-ping">—</strong></span>
+                <span class="hero-chip"><span>Perfil</span><strong id="hero-profile">—</strong></span>
+              </div>
+            </div>
+            <div class="shield-visual"><div class="shield-ring"></div><div class="shield-ring inner"></div><div class="shield-core"><img class="brand-logo" src="/assets/logo-bll.png?v=client-portal-20260805-2" alt="" width="96" height="96" decoding="async"></div></div>
           </div>
           <div class="stats-grid">
             <article class="stat-card"><span class="stat-label">Perfil de seguridad</span><strong id="stat-antiraid">—</strong><small id="stat-raidmode">Comprobando</small></article>
             <article class="stat-card"><span class="stat-label">Tickets abiertos</span><strong id="stat-tickets">0</strong><small>Canales activos</small></article>
-            <article class="stat-card" data-permission="claimkey"><span class="stat-label">Claim Key</span><strong id="stat-claimkey">—</strong><small id="stat-claimkey-detail">Accesos disponibles</small></article>
+            <article class="stat-card" data-permission="claimkey"><span class="stat-label">Claim Key</span><strong id="stat-claimkey">—</strong><small id="stat-claimkey-detail">Accesos disponibles</small><span class="stat-meter"><i id="stat-claimkey-meter"></i></span></article>
             <article class="stat-card"><span class="stat-label">Miembros</span><strong id="stat-members">0</strong><small id="stat-guild">Servidor</small></article>
             <article class="stat-card" data-permission="clients"><span class="stat-label">Clientes web</span><strong id="stat-clients">0</strong><small>Accesos del portal</small></article>
             <article class="stat-card"><span class="stat-label">Usuarios del panel</span><strong id="stat-users">0</strong><small>Accesos configurados</small></article>
@@ -417,7 +439,7 @@
                 <aside class="panel-card claim-key-preview-panel claim-key-dm-preview-panel">
                   <div><div class="eyebrow">VISTA PREVIA · DM</div><h3>Conversación privada</h3><p class="muted helper-copy">El usuario recibirá este paquete antes de ver la confirmación.</p></div>
                   <div class="discord-dm-preview">
-                    <div class="discord-dm-header"><img class="discord-dm-avatar" src="/assets/logo-bll.png?v=client-portal-20260805-1" alt="" width="38" height="38" decoding="async"><div><strong>BLL $ LIFE</strong><small>BOT · ahora</small></div></div>
+                    <div class="discord-dm-header"><img class="discord-dm-avatar" src="/assets/logo-bll.png?v=client-portal-20260805-2" alt="" width="38" height="38" decoding="async"><div><strong>BLL $ LIFE</strong><small>BOT · ahora</small></div></div>
                     <div class="discord-dm-note"><span>✓</span><p>Entrega privada protegida. Tus datos no aparecen en el canal.</p></div>
                     <article id="claim-key-credential-preview" class="claim-key-preview-embed dm-preview-embed">
                       <div class="claim-key-preview-body">
@@ -594,7 +616,7 @@
 
   <main id="client-view" class="client-shell hidden">
     <header class="client-topbar">
-      <div class="client-brand"><img class="brand-logo" src="/assets/logo-bll.png?v=client-portal-20260805-1" alt="" width="42" height="42" decoding="async"><div><strong>BLL $ LIFE</strong><small>Portal de Clientes</small></div></div>
+      <div class="client-brand"><img class="brand-logo" src="/assets/logo-bll.png?v=client-portal-20260805-2" alt="" width="42" height="42" decoding="async"><div><strong>BLL $ LIFE</strong><small>Portal de Clientes</small></div></div>
       <div class="client-session">
         <div class="client-session-copy"><span id="client-display-name">Cliente</span><small id="client-username">—</small></div>
         <div id="client-avatar" class="user-avatar">C</div>
@@ -604,7 +626,7 @@
     <div class="client-content">
       <section class="client-hero">
         <div class="client-hero-copy"><div class="eyebrow">ACCESO PRIVADO VERIFICADO</div><h1 id="client-portal-title">Centro de Descargas BLL $ LIFE</h1><p id="client-portal-description">Cargando tus descargas autorizadas...</p><div id="client-portal-notice" class="client-security-notice" role="note"></div></div>
-        <div class="client-access-seal" aria-hidden="true"><img class="brand-logo" src="/assets/logo-bll.png?v=client-portal-20260805-1" alt="" width="104" height="104" decoding="async"><strong>CLIENT</strong><small>SECURE ACCESS</small></div>
+        <div class="client-access-seal" aria-hidden="true"><img class="brand-logo" src="/assets/logo-bll.png?v=client-portal-20260805-2" alt="" width="104" height="104" decoding="async"><strong>CLIENT</strong><small>SECURE ACCESS</small></div>
       </section>
       <div class="client-portal-layout">
         <section class="client-download-section" aria-labelledby="client-download-heading">
@@ -683,6 +705,18 @@
       <div class="form-actions"><button class="button ghost client-modal-cancel" type="button">Cancelar</button><button class="button primary" type="submit">Guardar cliente</button></div>
     </form>
   </dialog>
+
+  <div id="command-palette" class="command-palette hidden" role="dialog" aria-modal="true" aria-label="Paleta de comandos">
+    <div class="command-panel">
+      <input id="command-search" class="command-search" type="search" placeholder="Buscar sección o acción..." autocomplete="off" spellcheck="false" aria-label="Buscar">
+      <div id="command-results" class="command-results" role="listbox" aria-label="Resultados"></div>
+      <div class="command-footer">
+        <span><kbd>↑</kbd> <kbd>↓</kbd> navegar</span>
+        <span><kbd>Enter</kbd> abrir</span>
+        <span><kbd>Esc</kbd> cerrar</span>
+      </div>
+    </div>
+  </div>
 
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 </body>

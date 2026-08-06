@@ -339,8 +339,31 @@ async function loadOverview(authGeneration = null) {
   $('#bot-badge').className = `badge ${ready ? 'success' : 'neutral'}`;
   $('#sidebar-status').textContent = ready ? 'En línea' : 'Conectando';
   $('#sidebar-status-dot').classList.toggle('offline', !ready);
+  renderHeroMeta(data, ready);
+  renderClaimKeyMeter(data.stats);
   renderAudit(data.audit);
   return true;
+}
+
+function renderHeroMeta(data, ready) {
+  $('#hero-connection').textContent = ready ? 'En línea' : 'Conectando';
+  $('#hero-status-dot').classList.toggle('offline', !ready);
+  $('#hero-guild').textContent = data.guild.name;
+  $('#hero-ping').textContent = data.bot.ping < 0 ? '—' : `${data.bot.ping} ms`;
+  $('#hero-profile').textContent = data.stats.securityProfileName ?? 'Sin acceso';
+}
+
+function renderClaimKeyMeter(stats) {
+  const meter = $('#stat-claimkey-meter');
+  if (!meter) return;
+  const available = Number(stats.claimKeyAvailable);
+  const claimed = Number(stats.claimKeyClaimed);
+  const total = available + claimed;
+  const ratio = Number.isFinite(total) && total > 0 ? Math.round((available / total) * 100) : 0;
+  meter.style.width = `${ratio}%`;
+  meter.parentElement?.setAttribute('title', total > 0
+    ? `${ratio}% del inventario sigue disponible`
+    : 'Sin credenciales en el inventario');
 }
 
 function renderAudit(entries) {
@@ -2880,3 +2903,196 @@ resetEmbedForm();
     if (state.authGeneration === authGeneration) showLogin();
   }
 })();
+
+/* ==========================================================================
+   Tema claro/oscuro
+   ========================================================================== */
+
+const THEME_KEY = 'bll-theme';
+
+function readStoredTheme() {
+  try {
+    const stored = localStorage.getItem(THEME_KEY);
+    return stored === 'light' || stored === 'dark' ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+function applyTheme(theme) {
+  const next = theme === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  const toggle = $('#theme-toggle');
+  if (toggle) {
+    toggle.setAttribute('aria-label', next === 'light' ? 'Activar tema oscuro' : 'Activar tema claro');
+    toggle.setAttribute('aria-pressed', String(next === 'light'));
+  }
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', next === 'light' ? '#eef2f8' : '#080d16');
+}
+
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  applyTheme(next);
+  try { localStorage.setItem(THEME_KEY, next); } catch { /* almacenamiento no disponible */ }
+}
+
+applyTheme(readStoredTheme()
+  ?? (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark'));
+$('#theme-toggle')?.addEventListener('click', toggleTheme);
+
+/* ==========================================================================
+   Paleta de comandos (Ctrl+K)
+   ========================================================================== */
+
+const commandState = { open: false, index: 0, items: [] };
+
+const commandNavIcons = {
+  overview: '◈',
+  security: '⬢',
+  tickets: '▱',
+  claimkey: '◇',
+  embeds: '▤',
+  clients: '◫',
+  users: '◎',
+  account: '○',
+};
+
+function availableCommands() {
+  const commands = $$('.nav-item')
+    .filter((item) => !item.classList.contains('hidden'))
+    .map((item) => ({
+      id: item.dataset.page,
+      label: pages[item.dataset.page] ?? item.textContent.trim(),
+      hint: 'Ir a',
+      icon: commandNavIcons[item.dataset.page] ?? '◈',
+      run: () => openPage(item.dataset.page),
+    }));
+  commands.push({
+    id: 'theme',
+    label: document.documentElement.dataset.theme === 'light' ? 'Activar tema oscuro' : 'Activar tema claro',
+    hint: 'Apariencia',
+    icon: '◐',
+    run: toggleTheme,
+  });
+  commands.push({
+    id: 'refresh',
+    label: 'Actualizar el resumen',
+    hint: 'Acción',
+    icon: '⟳',
+    run: () => loadOverview().catch((error) => toast(error.message, 'error')),
+  });
+  commands.push({
+    id: 'logout',
+    label: 'Cerrar sesión',
+    hint: 'Cuenta',
+    icon: '⏻',
+    run: logoutCurrentSession,
+  });
+  return commands;
+}
+
+function renderCommandResults(query = '') {
+  const results = $('#command-results');
+  const term = query.trim().toLowerCase();
+  commandState.items = availableCommands().filter(
+    (command) => !term || command.label.toLowerCase().includes(term),
+  );
+  if (commandState.index >= commandState.items.length) commandState.index = 0;
+
+  if (!commandState.items.length) {
+    const empty = document.createElement('p');
+    empty.className = 'command-empty';
+    empty.textContent = 'Sin resultados.';
+    results.replaceChildren(empty);
+    return;
+  }
+
+  results.replaceChildren(...commandState.items.map((command, index) => {
+    const option = document.createElement('button');
+    option.type = 'button';
+    option.className = `command-option${index === commandState.index ? ' active' : ''}`;
+    option.setAttribute('role', 'option');
+    option.setAttribute('aria-selected', String(index === commandState.index));
+
+    const icon = document.createElement('span');
+    icon.className = 'nav-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = command.icon;
+
+    const label = document.createElement('span');
+    label.textContent = command.label;
+
+    const hint = document.createElement('span');
+    hint.className = 'command-option-meta';
+    hint.textContent = command.hint;
+
+    option.append(icon, label, hint);
+    option.addEventListener('click', () => runCommand(index));
+    return option;
+  }));
+}
+
+function openCommandPalette() {
+  if (commandState.open || $('#app-view').classList.contains('hidden')) return;
+  commandState.open = true;
+  commandState.index = 0;
+  const palette = $('#command-palette');
+  palette.classList.remove('hidden');
+  const search = $('#command-search');
+  search.value = '';
+  renderCommandResults();
+  search.focus();
+}
+
+function closeCommandPalette() {
+  if (!commandState.open) return;
+  commandState.open = false;
+  $('#command-palette').classList.add('hidden');
+}
+
+function runCommand(index) {
+  const command = commandState.items[index];
+  if (!command) return;
+  closeCommandPalette();
+  command.run();
+}
+
+function moveCommandSelection(delta) {
+  if (!commandState.items.length) return;
+  commandState.index = (commandState.index + delta + commandState.items.length) % commandState.items.length;
+  renderCommandResults($('#command-search').value);
+  $$('.command-option')[commandState.index]?.scrollIntoView({ block: 'nearest' });
+}
+
+$('#command-trigger')?.addEventListener('click', openCommandPalette);
+$('#command-search')?.addEventListener('input', (event) => {
+  commandState.index = 0;
+  renderCommandResults(event.target.value);
+});
+$('#command-palette')?.addEventListener('click', (event) => {
+  if (event.target === $('#command-palette')) closeCommandPalette();
+});
+
+document.addEventListener('keydown', (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault();
+    if (commandState.open) closeCommandPalette();
+    else openCommandPalette();
+    return;
+  }
+  if (!commandState.open) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeCommandPalette();
+  } else if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    moveCommandSelection(1);
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    moveCommandSelection(-1);
+  } else if (event.key === 'Enter') {
+    event.preventDefault();
+    runCommand(commandState.index);
+  }
+});
