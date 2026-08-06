@@ -81,14 +81,31 @@ function toast(message, type = 'success') {
   setTimeout(() => element.remove(), 3800);
 }
 
+const buttonContentSnapshots = new WeakMap();
+
 function setButtonBusy(button, busy, label) {
   if (!button) return;
   if (busy) {
-    button.dataset.originalText = button.textContent;
-    button.textContent = label || 'Procesando...';
+    if (!buttonContentSnapshots.has(button)) {
+      buttonContentSnapshots.set(button, Array.from(button.childNodes));
+    }
+    const spinner = document.createElement('span');
+    spinner.className = 'button-spinner';
+    spinner.setAttribute('aria-hidden', 'true');
+    const text = document.createElement('span');
+    text.textContent = label || 'Procesando...';
+    button.replaceChildren(spinner, text);
+    button.dataset.busy = 'true';
+    button.setAttribute('aria-busy', 'true');
     button.disabled = true;
   } else {
-    button.textContent = button.dataset.originalText || button.textContent;
+    const snapshot = buttonContentSnapshots.get(button);
+    if (snapshot) {
+      button.replaceChildren(...snapshot);
+      buttonContentSnapshots.delete(button);
+    }
+    delete button.dataset.busy;
+    button.removeAttribute('aria-busy');
     button.disabled = false;
   }
 }
@@ -2299,7 +2316,10 @@ $('#login-form').addEventListener('submit', async (event) => {
 $$('[data-toggle-password]').forEach((button) => button.addEventListener('click', () => {
   const input = $(`#${button.dataset.togglePassword}`);
   input.type = input.type === 'password' ? 'text' : 'password';
-  button.textContent = input.type === 'password' ? 'Ver' : 'Ocultar';
+  const hidden = input.type === 'password';
+  button.textContent = hidden ? 'Ver' : 'Ocultar';
+  button.setAttribute('aria-pressed', hidden ? 'false' : 'true');
+  button.setAttribute('aria-label', hidden ? 'Mostrar contraseña' : 'Ocultar contraseña');
 }));
 $$('.nav-item').forEach((button) => button.addEventListener('click', () => openPage(button.dataset.page)));
 $$('[data-refresh="overview"]').forEach((button) => button.addEventListener('click', () => loadOverview().catch((error) => toast(error.message, 'error'))));
