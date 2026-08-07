@@ -5729,3 +5729,257 @@ input[type="color"] {
 .modal-header .icon-button {
   font-size: var(--fs-2xl);
 }
+
+/* ==========================================================================
+   24 · Puntos de restauración
+   ========================================================================== */
+
+.restore-intro {
+  display: grid;
+  gap: var(--sp-5);
+  margin-bottom: var(--sp-4);
+}
+
+.restore-safety {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border: 1px solid rgba(61, 220, 154, .2);
+  border-radius: var(--r-md);
+  background: var(--success-soft);
+}
+
+.restore-safety > span {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(61, 220, 154, .18);
+  color: var(--success);
+  font-size: var(--fs-tiny);
+  font-weight: 900;
+}
+
+.restore-safety p {
+  min-width: 0;
+  margin: 0;
+}
+
+.restore-safety strong {
+  display: block;
+  color: var(--success);
+  font-size: var(--fs-sm);
+}
+
+.restore-safety small {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: var(--fs-tiny);
+  line-height: 1.55;
+}
+
+.restore-diff {
+  display: grid;
+  gap: var(--sp-4);
+}
+
+.restore-diff-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.restore-diff-head p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+.restore-diff-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--sp-2);
+}
+
+.restore-diff-grid > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: var(--sp-4) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-input);
+  text-align: center;
+}
+
+.restore-diff-grid strong {
+  font-size: var(--fs-2xl);
+  letter-spacing: -.04em;
+  line-height: 1.1;
+}
+
+.restore-diff-grid span {
+  color: var(--text-muted);
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.restore-diff-grid .tone-lost {
+  border-color: rgba(255, 107, 131, .28);
+  background: var(--danger-soft);
+}
+
+.restore-diff-grid .tone-lost strong {
+  color: var(--danger);
+}
+
+.restore-diff-grid .tone-altered {
+  border-color: rgba(255, 194, 92, .26);
+  background: var(--warning-soft);
+}
+
+.restore-diff-grid .tone-altered strong {
+  color: var(--warning);
+}
+
+.restore-diff-grid .tone-intact strong {
+  color: var(--success);
+}
+
+.restore-missing {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--accent-softer);
+}
+
+.restore-missing > strong {
+  color: var(--text-soft);
+  font-size: var(--fs-xs);
+}
+
+.restore-missing-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.restore-missing-names span {
+  padding: 4px var(--sp-3);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--r-full);
+  background: var(--accent-soft);
+  color: var(--accent-hi);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+
+.restore-point-list {
+  display: grid;
+  gap: var(--sp-3);
+  margin-top: var(--sp-4);
+}
+
+.restore-point-card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-input);
+  transition: border-color var(--t-fast), background var(--t-fast);
+}
+
+.restore-point-card:hover {
+  border-color: var(--border-accent);
+  background: var(--accent-softer);
+}
+
+.restore-point-index {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--border-accent);
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-hi);
+  font-family: var(--font-mono);
+  font-size: var(--fs-tiny);
+  font-weight: 800;
+}
+
+.restore-point-body {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.restore-point-body strong {
+  overflow: hidden;
+  font-size: var(--fs-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.restore-point-body small {
+  color: var(--text-muted);
+  font-size: var(--fs-micro);
+}
+
+.restore-point-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--sp-2);
+}
+
+.restore-point-actions .button {
+  min-height: 36px;
+  padding: 7px var(--sp-3);
+  font-size: var(--fs-tiny);
+}
+
+@media (max-width: 1080px) {
+  .restore-diff-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .restore-diff-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .restore-point-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .restore-point-actions {
+    grid-column: 1 / -1;
+  }
+
+  .restore-point-actions .button {
+    flex: 1;
+  }
+
+  .restore-intro .card-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .restore-intro .card-header .button {
+    width: 100%;
+  }
+}

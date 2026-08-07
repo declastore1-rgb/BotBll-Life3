@@ -17,6 +17,7 @@ const state = {
   clientPortalLoadGeneration: 0,
   clientPortalSaveGeneration: 0,
   clientPortalSaving: false,
+  restore: { points: [], diff: null, loaded: false, limit: 10 },
   extraButtons: [],
   claimKey: {
     settings: null,
@@ -136,6 +137,9 @@ function clearSessionUi() {
   state.extraButtons = [];
   state.embeds = [];
   state.schedules = [];
+  // Los puntos de restauración describen la estructura del servidor: no deben
+  // sobrevivir al cierre de sesión ni verse desde otra cuenta.
+  state.restore = { points: [], diff: null, loaded: false, limit: 10 };
   state.claimKey = {
     settings: null,
     stats: { available: 0, claimed: 0, total: 0 },
@@ -432,8 +436,15 @@ const responseModeLabels = Object.freeze({
   strict: 'Estricto',
 });
 
+const securityViewPermissions = {
+  antiraid: 'antiraid',
+  antinuke: 'antinuke',
+  automod: 'automod',
+  restore: 'antinuke',
+};
+
 function switchSecurityView(name) {
-  const permission = name === 'antiraid' ? 'antiraid' : name === 'antinuke' ? 'antinuke' : 'automod';
+  const permission = securityViewPermissions[name] ?? 'automod';
   if (!state.permissions.includes(permission)) return;
   state.securityView = name;
   $$('[data-security-view]').forEach((tab) => {
@@ -444,6 +455,47 @@ function switchSecurityView(name) {
   $$('.security-module-panel').forEach((panel) => {
     panel.classList.toggle('active', panel.id === `security-view-${name}`);
   });
+  // Los puntos de restauración se piden solo al abrir la pestaña: el contenido
+  // completo de cada punto es grande y no hace falta en cada carga del panel.
+  if (name === 'restore' && !state.restore.loaded) {
+    loadRestorePoints().catch((error) => toast(error.message, 'error'));
+  }
+}
+
+/*
+ * Los textos de cada tarjeta vienen del backend, que es la única fuente de
+ * verdad de los perfiles. Así, renombrar o redefinir un nivel en el servidor
+ * se refleja en el panel sin tocar el HTML.
+ */
+function syncSecurityProfileCards(profiles) {
+  if (!Array.isArray(profiles)) return;
+  for (const profile of profiles) {
+    const card = $(`[data-profile-card="${profile.id}"]`);
+    if (!card) continue;
+    const eyebrow = card.querySelector('.eyebrow');
+    const title = card.querySelector('h4');
+    const description = card.querySelector('p');
+    const list = card.querySelector('ul');
+    const button = card.querySelector('[data-security-profile]');
+    if (eyebrow) eyebrow.textContent = profile.tagline;
+    if (title) title.textContent = profile.name;
+    if (description) description.textContent = profile.description;
+    if (list && Array.isArray(profile.safeguards)) {
+      list.replaceChildren(...profile.safeguards.map((item) => {
+        const entry = document.createElement('li');
+        entry.textContent = item;
+        return entry;
+      }));
+    }
+    if (button) {
+      // El nombre corto evita etiquetas como "Activar Nivel 1 · Pasivo".
+      const shortName = profile.name.includes('·')
+        ? profile.name.split('·').pop().trim()
+        : profile.name;
+      button.dataset.defaultLabel = `Activar ${shortName}`;
+      if (!button.disabled) button.textContent = button.dataset.defaultLabel;
+    }
+  }
 }
 
 function renderSecurityHealth(health) {
@@ -574,6 +626,7 @@ function renderSecurity(data) {
     : activatedAt.toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' });
   renderSecurityHealth(data.health);
 
+  syncSecurityProfileCards(data.profiles);
   $$('[data-profile-card]').forEach((card) => card.classList.toggle('active', card.dataset.profileCard === data.security.profile));
   $$('[data-security-profile]').forEach((button) => {
     button.dataset.defaultLabel ||= button.textContent;
@@ -3095,4 +3148,199 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault();
     runCommand(commandState.index);
   }
+});
+
+/* ==========================================================================
+   Puntos de restauración del servidor
+   ========================================================================== */
+
+function severityBadge(severity) {
+  if (severity === 'critical') return { className: 'badge danger', text: 'Faltan elementos' };
+  if (severity === 'warning') return { className: 'badge warning', text: 'Con cambios' };
+  return { className: 'badge success', text: 'Coincide' };
+}
+
+function renderRestoreDiff() {
+  const container = $('#restore-diff');
+  if (!container) return;
+  const diff = state.restore.diff;
+  if (!diff) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = state.restore.points.length
+      ? 'Sin comparación disponible.'
+      : 'Crea tu primer punto para poder comparar la estructura del servidor.';
+    container.replaceChildren(empty);
+    return;
+  }
+
+  const badge = severityBadge(diff.summary.severity);
+  const head = document.createElement('div');
+  head.className = 'restore-diff-head';
+  const label = document.createElement('span');
+  label.className = badge.className;
+  label.textContent = badge.text;
+  const caption = document.createElement('p');
+  caption.textContent = 'Comparación con el punto más reciente';
+  head.append(label, caption);
+
+  const cells = [
+    ['Perdidos', diff.summary.lost, 'lost'],
+    ['Con cambios', diff.summary.altered, 'altered'],
+    ['Recreados a mano', diff.summary.recreated, ''],
+    ['Nuevos desde entonces', diff.summary.added, ''],
+    ['Intactos', diff.summary.intact, 'intact'],
+  ];
+  const grid = document.createElement('div');
+  grid.className = 'restore-diff-grid';
+  for (const [name, value, tone] of cells) {
+    const cell = document.createElement('div');
+    if (tone) cell.classList.add(`tone-${tone}`);
+    const number = document.createElement('strong');
+    number.textContent = String(value);
+    const text = document.createElement('span');
+    text.textContent = name;
+    cell.append(number, text);
+    grid.append(cell);
+  }
+
+  container.replaceChildren(head, grid);
+
+  const missing = [...diff.channels.missing, ...diff.roles.missing];
+  if (missing.length) {
+    const list = document.createElement('div');
+    list.className = 'restore-missing';
+    const title = document.createElement('strong');
+    title.textContent = 'Se reconstruirían:';
+    list.append(title);
+    const names = document.createElement('div');
+    names.className = 'restore-missing-names';
+    missing.slice(0, 24).forEach((item) => {
+      const chip = document.createElement('span');
+      chip.textContent = item.name;
+      names.append(chip);
+    });
+    if (missing.length > 24) {
+      const more = document.createElement('span');
+      more.textContent = `+${missing.length - 24} más`;
+      names.append(more);
+    }
+    list.append(names);
+    container.append(list);
+  }
+}
+
+function createRestorePointCard(point, index) {
+  const card = document.createElement('article');
+  card.className = 'restore-point-card';
+
+  const number = document.createElement('span');
+  number.className = 'restore-point-index';
+  number.textContent = String(index + 1).padStart(2, '0');
+
+  const body = document.createElement('div');
+  body.className = 'restore-point-body';
+  const title = document.createElement('strong');
+  title.textContent = point.name;
+  const meta = document.createElement('small');
+  meta.textContent = `${new Date(point.createdAt).toLocaleString('es-ES')} · ${point.createdBy}`;
+  const counts = document.createElement('small');
+  counts.textContent = `${point.channels} canales · ${point.roles} roles`;
+  body.append(title, meta, counts);
+
+  const actions = document.createElement('div');
+  actions.className = 'restore-point-actions';
+
+  const inspect = document.createElement('button');
+  inspect.type = 'button';
+  inspect.className = 'button ghost';
+  inspect.textContent = 'Comparar';
+  inspect.addEventListener('click', () => performButtonAction(inspect, 'Comparando...', async () => {
+    const data = await api(`/api/restore-points/${encodeURIComponent(point.id)}`);
+    state.restore.diff = data.diff;
+    renderRestoreDiff();
+    toast(`Comparación con "${point.name}" actualizada.`);
+  }));
+
+  const restore = document.createElement('button');
+  restore.type = 'button';
+  restore.className = 'button primary';
+  restore.textContent = 'Restaurar';
+  restore.addEventListener('click', () => {
+    const confirmed = confirm(
+      `Vas a restaurar "${point.name}".\n\n`
+        + 'Se crearán los canales y roles que falten. No se borra ni se modifica nada de lo que existe ahora.\n\n'
+        + 'Los permisos de administración no se reponen automáticamente. ¿Continuar?',
+    );
+    if (!confirmed) return;
+    performButtonAction(restore, 'Restaurando...', async () => {
+      const data = await api(`/api/restore-points/${encodeURIComponent(point.id)}/restore`, {
+        method: 'POST',
+        body: { scope: 'all' },
+      });
+      state.restore.diff = data.diff;
+      renderRestoreDiff();
+      const { rolesCreated, channelsCreated, failures } = data.result.summary;
+      const trimmed = data.result.trimmedRoles ?? [];
+      let message = `Restaurado: ${rolesCreated} rol(es) y ${channelsCreated} canal(es).`;
+      if (trimmed.length) message += ` Sin permisos de administración: ${trimmed.join(', ')}.`;
+      if (failures) message += ` ${failures} elemento(s) no se pudieron recrear.`;
+      toast(message, failures ? 'error' : 'success');
+    });
+  });
+
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'button danger';
+  remove.textContent = 'Eliminar';
+  remove.addEventListener('click', () => {
+    if (!confirm(`¿Eliminar el punto "${point.name}"? Esta acción no se puede deshacer.`)) return;
+    performButtonAction(remove, 'Eliminando...', async () => {
+      const data = await api(`/api/restore-points/${encodeURIComponent(point.id)}`, { method: 'DELETE' });
+      state.restore.points = data.points ?? [];
+      renderRestorePoints();
+      toast('Punto eliminado.');
+    });
+  });
+
+  actions.append(inspect, restore, remove);
+  card.append(number, body, actions);
+  return card;
+}
+
+function renderRestorePoints() {
+  const list = $('#restore-point-list');
+  if (!list) return;
+  $('#restore-count').textContent = `${state.restore.points.length} / ${state.restore.limit ?? 10}`;
+  if (!state.restore.points.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'Todavía no hay puntos guardados. Crea uno cuando el servidor esté como quieres conservarlo.';
+    list.replaceChildren(empty);
+    renderRestoreDiff();
+    return;
+  }
+  list.replaceChildren(...state.restore.points.map(createRestorePointCard));
+  renderRestoreDiff();
+}
+
+async function loadRestorePoints() {
+  const data = await api('/api/restore-points');
+  state.restore.points = Array.isArray(data.points) ? data.points : [];
+  state.restore.diff = data.diff ?? null;
+  state.restore.limit = data.limit ?? 10;
+  state.restore.loaded = true;
+  renderRestorePoints();
+}
+
+$('#create-restore-point')?.addEventListener('click', (event) => {
+  const button = event.currentTarget;
+  const name = prompt('Nombre del punto de restauración:', `Punto ${new Date().toLocaleDateString('es-ES')}`);
+  if (name === null) return;
+  performButtonAction(button, 'Guardando...', async () => {
+    const data = await api('/api/restore-points', { method: 'POST', body: { name: name.trim() || undefined } });
+    state.restore.points = data.points ?? [];
+    renderRestorePoints();
+    toast('Punto de restauración creado.');
+  });
 });

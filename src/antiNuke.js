@@ -35,7 +35,7 @@ function serializeOverwrites(channel) {
   })) ?? [];
 }
 
-function serializeChannel(channel) {
+export function serializeChannel(channel) {
   if (!SUPPORTED_CHANNEL_TYPES.has(channel.type)) return null;
   if ('topic' in channel && channel.topic?.startsWith('ticket-owner:')) return null;
   return {
@@ -59,7 +59,7 @@ function serializeChannel(channel) {
   };
 }
 
-function serializeRole(role) {
+export function serializeRole(role) {
   if (role.managed || role.id === role.guild.id) return null;
   return {
     id: role.id,

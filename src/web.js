@@ -15,6 +15,12 @@ import {
 } from './auth.js';
 import { config } from './config.js';
 import { buildClaimKeyPanel, syncClaimKeyPublishedPanels } from './claimKey.js';
+import {
+  buildRestorePoint,
+  captureServerState,
+  compareWithGuild,
+  restorePoint,
+} from './restorePoints.js';
 import { buildCustomEmbed } from './embeds.js';
 import {
   getSecurityProfile,
@@ -32,7 +38,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, '..', 'public');
-const DASHBOARD_VERSION = 'client-portal-20260805-2';
+const DASHBOARD_VERSION = 'client-portal-20260805-3';
 const loginAttempts = new Map();
 const passwordChangeAttempts = new Map();
 const passwordChangeInFlight = new Map();
@@ -1246,6 +1252,7 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
       if (entry.module === 'Anti-Nuke') return can(user, 'antinuke');
       if (entry.module === 'AutoMod') return can(user, 'automod');
       if (entry.module === 'Moderación') return can(user, 'automod');
+      if (entry.module === 'Restauración') return can(user, 'antinuke');
       if (entry.module === 'Tickets') return can(user, 'tickets');
       if (entry.module === 'Claim Key') return can(user, 'claimkey');
       if (entry.module === 'Seguridad') return SECURITY_PERMISSIONS.some((permission) => can(user, permission));
@@ -1461,6 +1468,112 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
       response.json({ ok: true, status: autoMod.status(config.guildId) });
     } catch (error) { next(error); }
   });
+
+  /* --- Puntos de restauración del servidor --- */
+
+  const requireGuild = (response) => {
+    const guild = client.guilds.cache.get(config.guildId);
+    if (!guild) {
+      response.status(503).json({ error: 'Discord todavía no está conectado.' });
+      return null;
+    }
+    return guild;
+  };
+
+  app.get('/api/restore-points', requirePermission('antinuke'), (_request, response) => {
+    const guild = requireGuild(response);
+    if (!guild) return undefined;
+    const points = store.getRestorePoints(config.guildId);
+    const latest = points.length ? store.getRestorePoint(config.guildId, points[0].id) : null;
+    return response.json({
+      points,
+      limit: 10,
+      current: captureServerState(guild),
+      diff: latest ? compareWithGuild(latest, guild) : null,
+    });
+  });
+
+  app.post('/api/restore-points', requirePermission('antinuke'), async (request, response, next) => {
+    try {
+      const guild = requireGuild(response);
+      if (!guild) return undefined;
+      const name = cleanText(request.body?.name, 'Punto manual', 80);
+      const point = buildRestorePoint(guild, { name, actor: request.dashboardAuth.user.username });
+      const created = await store.createRestorePoint(config.guildId, point, request.dashboardAuth.user);
+      return response.status(201).json({ point: created, points: store.getRestorePoints(config.guildId) });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.get('/api/restore-points/:id', requirePermission('antinuke'), (request, response) => {
+    const guild = requireGuild(response);
+    if (!guild) return undefined;
+    const point = store.getRestorePoint(config.guildId, request.params.id);
+    if (!point) return response.status(404).json({ error: 'Punto de restauración no encontrado.' });
+    return response.json({
+      point: {
+        id: point.id,
+        name: point.name,
+        createdAt: point.createdAt,
+        createdBy: point.createdBy,
+        channels: point.channels.length,
+        roles: point.roles.length,
+      },
+      diff: compareWithGuild(point, guild),
+    });
+  });
+
+  app.delete('/api/restore-points/:id', requirePermission('antinuke'), async (request, response, next) => {
+    try {
+      await store.deleteRestorePoint(config.guildId, request.params.id, request.dashboardAuth.user);
+      return response.json({ ok: true, points: store.getRestorePoints(config.guildId) });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  /*
+   * Restaurar reconstruye estructura del servidor, así que exige los tres
+   * permisos de seguridad, igual que cambiar el perfil global.
+   */
+  app.post(
+    '/api/restore-points/:id/restore',
+    requireAllPermissions(...SECURITY_PERMISSIONS),
+    async (request, response, next) => {
+      try {
+        const guild = requireGuild(response);
+        if (!guild) return undefined;
+        const point = store.getRestorePoint(config.guildId, request.params.id);
+        if (!point) return response.status(404).json({ error: 'Punto de restauración no encontrado.' });
+
+        const scope = ['all', 'channels', 'roles'].includes(request.body?.scope)
+          ? request.body.scope
+          : 'all';
+        const keepDangerousPermissions = request.body?.keepDangerousPermissions === true;
+
+        // Anti-Nuke puede estar recreando cosas en paralelo; restaurar a la vez
+        // duplicaría canales.
+        await antiNuke.waitUntilIdle(config.guildId);
+
+        const result = await restorePoint(guild, point, { scope, keepDangerousPermissions });
+        await store.recordAudit(
+          request.dashboardAuth.user,
+          'Restauración',
+          `Punto "${point.name}" restaurado: ${result.summary.rolesCreated} rol(es) y `
+            + `${result.summary.channelsCreated} canal(es) recreados`
+            + (result.summary.failures ? `, ${result.summary.failures} fallo(s)` : ''),
+        );
+        return response.json({
+          result,
+          diff: compareWithGuild(point, guild),
+          points: store.getRestorePoints(config.guildId),
+        });
+      } catch (error) {
+        return next(error);
+      }
+    },
+  );
 
   app.get('/api/tickets', requirePermission('tickets'), (_request, response) => {
     response.json({ settings: store.getGuildSettings(config.guildId).tickets });

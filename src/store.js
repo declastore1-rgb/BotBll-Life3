@@ -33,6 +33,11 @@ const CLAIM_KEY_MAX_IMPORT = 250;
 const CLAIM_KEY_MAX_CREDENTIALS = 5_000;
 const CLIENT_MAX_ACCOUNTS = 5_000;
 const CLIENT_PORTAL_MAX_DOWNLOADS = 20;
+/* Límites de los puntos de restauración: el estado vive en un único JSON que
+ * se reescribe completo en cada cambio, así que conviene acotar su tamaño. */
+const RESTORE_POINT_MAX = 10;
+const RESTORE_POINT_MAX_CHANNELS = 500;
+const RESTORE_POINT_MAX_ROLES = 250;
 const EMBED_MAX_PER_USER = 100;
 const CLIENT_DOWNLOAD_ID = /^[a-zA-Z0-9_-]{1,36}$/;
 const CLAIM_KEY_SETTING_KEYS = Object.freeze(new Set([
@@ -327,6 +332,25 @@ function publicSecuritySettings(security) {
  * comportamiento no cambie solo por actualizar: pasivo nunca sanciona y
  * estricto sanciona cualquier falta.
  */
+function normalizeRestorePoints(value) {
+  if (!Array.isArray(value)) return [];
+  const points = [];
+  for (const item of value.slice(0, RESTORE_POINT_MAX)) {
+    if (!item || typeof item !== 'object') continue;
+    if (!Array.isArray(item.channels) || !Array.isArray(item.roles)) continue;
+    points.push({
+      id: typeof item.id === 'string' && item.id ? item.id : randomUUID(),
+      name: storedText(item.name, 'Punto guardado', 80),
+      createdAt: typeof item.createdAt === 'string' ? item.createdAt : new Date().toISOString(),
+      createdBy: storedText(item.createdBy, 'Sistema', 64),
+      guildName: storedText(item.guildName, 'Servidor', 120),
+      channels: item.channels.slice(0, RESTORE_POINT_MAX_CHANNELS),
+      roles: item.roles.slice(0, RESTORE_POINT_MAX_ROLES),
+    });
+  }
+  return points;
+}
+
 function normalizeSanctionSeverity(autoMod) {
   const stored = autoMod?.sanctionSeverity;
   if (isSanctionSeverity(stored)) return stored;
@@ -535,6 +559,7 @@ export class SettingsStore {
         publishedPanels: normalizeClaimKeyPanels(existingClaimKey.publishedPanels),
       },
       clientPortal: normalizeClientPortal(existing.clientPortal, this.defaults.clientPortal),
+      restorePoints: normalizeRestorePoints(existing.restorePoints),
       embeds: {
         ...clone(this.defaults.embeds),
         ...(existing.embeds ?? {}),
@@ -1048,6 +1073,77 @@ export class SettingsStore {
       if (!schedule) return null;
       Object.assign(schedule, clone(patch));
       return publicEmbedSchedule(schedule);
+    });
+  }
+
+  /* --- Puntos de restauración del servidor --- */
+
+  getRestorePoints(guildId = this.guildId) {
+    const points = this.data.guilds[guildId]?.restorePoints ?? [];
+    // La lista omite el contenido: un punto completo puede pesar cientos de
+    // kilobytes y el panel solo necesita la ficha para elegir.
+    return points.map((point) => ({
+      id: point.id,
+      name: point.name,
+      createdAt: point.createdAt,
+      createdBy: point.createdBy,
+      guildName: point.guildName,
+      channels: point.channels.length,
+      roles: point.roles.length,
+    }));
+  }
+
+  getRestorePoint(guildId, pointId) {
+    const point = (this.data.guilds[guildId]?.restorePoints ?? []).find((item) => item.id === pointId);
+    return point ? clone(point) : null;
+  }
+
+  async createRestorePoint(guildId, point, actor) {
+    return this.mutate((data) => {
+      const guild = data.guilds[guildId];
+      if (!guild) throw new Error('El servidor no está disponible.');
+      if (!Array.isArray(guild.restorePoints)) guild.restorePoints = [];
+      if (guild.restorePoints.length >= RESTORE_POINT_MAX) {
+        throw new Error(
+          `Solo se pueden guardar ${RESTORE_POINT_MAX} puntos. Elimina uno antes de crear otro.`,
+        );
+      }
+      const stored = {
+        id: randomUUID(),
+        name: storedText(point.name, `Punto ${guild.restorePoints.length + 1}`, 80),
+        createdAt: new Date().toISOString(),
+        createdBy: actorName(actor).slice(0, 64),
+        guildName: storedText(point.guildName, 'Servidor', 120),
+        channels: clone(point.channels ?? []).slice(0, RESTORE_POINT_MAX_CHANNELS),
+        roles: clone(point.roles ?? []).slice(0, RESTORE_POINT_MAX_ROLES),
+      };
+      guild.restorePoints.unshift(stored);
+      this.addAudit(
+        actor,
+        'Restauración',
+        `Punto de restauración creado: ${stored.name} (${stored.channels.length} canales, ${stored.roles.length} roles)`,
+      );
+      return {
+        id: stored.id,
+        name: stored.name,
+        createdAt: stored.createdAt,
+        createdBy: stored.createdBy,
+        guildName: stored.guildName,
+        channels: stored.channels.length,
+        roles: stored.roles.length,
+      };
+    });
+  }
+
+  async deleteRestorePoint(guildId, pointId, actor) {
+    return this.mutate((data) => {
+      const guild = data.guilds[guildId];
+      const points = Array.isArray(guild?.restorePoints) ? guild.restorePoints : [];
+      const index = points.findIndex((item) => item.id === pointId);
+      if (index < 0) throw new Error('Punto de restauración no encontrado.');
+      const [removed] = points.splice(index, 1);
+      this.addAudit(actor, 'Restauración', `Punto de restauración eliminado: ${removed.name}`);
+      return true;
     });
   }
 
