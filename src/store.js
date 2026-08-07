@@ -10,6 +10,7 @@ import path from 'node:path';
 import { hashPassword } from './auth.js';
 import {
   getSecurityProfile,
+  isSanctionSeverity,
   isSecurityProfileId,
   normalizeSecuritySettings,
   securityProfilePatches,
@@ -320,6 +321,20 @@ function publicSecuritySettings(security) {
   return clone(safeSecurity);
 }
 
+/*
+ * Alcance de sanciones de AutoMod. Las configuraciones guardadas antes de
+ * existir este campo se migran a partir del modo de respuesta, para que el
+ * comportamiento no cambie solo por actualizar: pasivo nunca sanciona y
+ * estricto sanciona cualquier falta.
+ */
+function normalizeSanctionSeverity(autoMod) {
+  const stored = autoMod?.sanctionSeverity;
+  if (isSanctionSeverity(stored)) return stored;
+  if (autoMod?.responseMode === 'passive') return 'none';
+  if (autoMod?.responseMode === 'strict') return 'all';
+  return 'high';
+}
+
 function guildMatchesSecurityProfile(settings, profileId) {
   const patches = securityProfilePatches(profileId);
   return Object.entries(patches).every(([moduleName, patch]) => (
@@ -509,6 +524,7 @@ export class SettingsStore {
       autoMod: {
         ...clone(this.defaults.autoMod),
         ...(existing.autoMod ?? {}),
+        sanctionSeverity: normalizeSanctionSeverity(existing.autoMod),
         strikes: Array.isArray(existing.autoMod?.strikes) ? existing.autoMod.strikes.slice(0, 500) : [],
       },
       tickets: { ...clone(this.defaults.tickets), ...(existing.tickets ?? {}) },

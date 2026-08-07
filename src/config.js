@@ -73,6 +73,8 @@ export const defaultGuildSettings = Object.freeze({
   autoMod: Object.freeze({
     enabled: true,
     responseMode: 'balanced',
+    // none: nunca sanciona · high: solo faltas graves · all: cualquier falta
+    sanctionSeverity: 'high',
     blockInvites: true,
     blockUnauthorizedLinks: false,
     blockSuspiciousFiles: true,

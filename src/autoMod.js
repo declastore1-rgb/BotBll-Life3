@@ -1,4 +1,5 @@
 import { Events } from 'discord.js';
+import { isSanctionable, ruleSeverity } from './securityProfiles.js';
 
 const INVITE_PATTERN = /(?:discord\.gg\/|discord(?:app)?\.com\/invite\/)[a-z0-9-]+/iu;
 const LINK_PATTERN = /(?:https?:\/\/|www\.|(?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\.)+[a-z]{2,})(?:[^\s<]*)/giu;
@@ -32,6 +33,17 @@ function countEmojis(content) {
   return [...graphemeSegmenter.segment(content)]
     .filter((item) => EMOJI_PATTERN.test(item.segment)).length;
 }
+
+/*
+ * Gravedad de cada infracción.
+ *
+ * high: riesgo real para el servidor o sus miembros (contenido prohibido,
+ *       captación hacia otros servidores, enlaces sin autorizar, ficheros
+ *       ejecutables). Puede acabar en sanción.
+ * low:  ruido o mala educación (mayúsculas, avalancha de emojis). Se retira
+ *       el mensaje, pero nunca justifica por sí solo un timeout o un ban.
+ */
+
 
 export class AutoMod {
   constructor(client, store, antiRaid) {
@@ -74,6 +86,7 @@ export class AutoMod {
     return {
       enabled: settings.enabled,
       responseMode: settings.responseMode,
+      sanctionSeverity: settings.sanctionSeverity,
       activeStrikes: activeStrikes.length,
       blockedWords: settings.blockedWords.length,
       finalAction: settings.finalAction,
@@ -92,15 +105,15 @@ export class AutoMod {
       const pattern = new RegExp(`(?:^|[^\\p{L}\\p{N}_])${escapeRegExp(normalize(word))}(?:$|[^\\p{L}\\p{N}_])`, 'iu');
       return pattern.test(normalized);
     });
-    if (blockedWord) return { rule: 'palabras prohibidas', detail: 'Se detectó contenido incluido en la lista bloqueada.' };
+    if (blockedWord) return this.flag('palabras prohibidas', 'Se detectó contenido incluido en la lista bloqueada.');
     if (settings.blockInvites && INVITE_PATTERN.test(content)) {
-      return { rule: 'invitaciones no autorizadas', detail: 'Se detectó una invitación de Discord.' };
+      return this.flag('invitaciones no autorizadas', 'Se detectó una invitación de Discord.');
     }
     if (settings.blockUnauthorizedLinks) {
       const unauthorized = extractDomains(content).find(
         (domain) => !domainAllowed(domain, settings.allowedDomains),
       );
-      if (unauthorized) return { rule: 'enlaces no autorizados', detail: `Dominio bloqueado: ${unauthorized}` };
+      if (unauthorized) return this.flag('enlaces no autorizados', `Dominio bloqueado: ${unauthorized}`);
     }
 
     const letters = [...content].filter((character) => /\p{L}/u.test(character));
@@ -111,13 +124,13 @@ export class AutoMod {
       ).length;
       const percentage = Math.round((uppercase / letters.length) * 100);
       if (percentage > settings.maxCapsPercent) {
-        return { rule: 'exceso de mayúsculas', detail: `${percentage}% de letras mayúsculas.` };
+        return this.flag('exceso de mayúsculas', `${percentage}% de letras mayúsculas.`);
       }
     }
 
     const emojiCount = countEmojis(content);
     if (emojiCount > settings.maxEmojis) {
-      return { rule: 'flood de emojis', detail: `${emojiCount} emojis en un solo mensaje.` };
+      return this.flag('flood de emojis', `${emojiCount} emojis en un solo mensaje.`);
     }
 
     if (settings.blockSuspiciousFiles) {
@@ -130,9 +143,13 @@ export class AutoMod {
         const extension = normalizedName.split('.').pop() ?? '';
         return settings.suspiciousExtensions.includes(extension);
       });
-      if (suspicious) return { rule: 'archivo sospechoso', detail: `Extensión bloqueada en ${suspicious.name}.` };
+      if (suspicious) return this.flag('archivo sospechoso', `Extensión bloqueada en ${suspicious.name}.`);
     }
     return null;
+  }
+
+  flag(rule, detail) {
+    return { rule, detail, severity: ruleSeverity(rule) };
   }
 
   async warn(message, settings, strike) {
@@ -143,20 +160,34 @@ export class AutoMod {
     if (warning) setTimeout(() => warning.delete().catch(() => null), 12_000).unref();
   }
 
-  async warnPassive(message, settings) {
+  async warnPassive(message, settings, note) {
     const warning = await message.channel.send({
-      content: `<@${message.author.id}> ${settings.warningMessage} Modo Lite: no se añadió ninguna sanción.`,
+      content: `<@${message.author.id}> ${settings.warningMessage} ${note}`,
       allowedMentions: { users: [message.author.id], roles: [], parse: [] },
     }).catch(() => null);
     if (warning) setTimeout(() => warning.delete().catch(() => null), 12_000).unref();
   }
 
+  /*
+   * Retirada sin sanción: el mensaje ya se borró, aquí solo se avisa y se
+   * registra. Se usa tanto en el nivel Pasivo como para las infracciones
+   * leves de los niveles superiores.
+   */
   async handlePassiveDetection(message, detection, settings) {
-    await this.warnPassive(message, settings);
+    const sanctionSeverity = settings.sanctionSeverity ?? 'all';
+    const minorInStricter = sanctionSeverity === 'high' && detection.severity === 'low';
+    const note = minorInStricter
+      ? 'Falta leve: el mensaje se retiró sin añadir sanción.'
+      : 'Modo Pasivo: no se añadió ninguna sanción.';
+    await this.warnPassive(message, settings, note);
     await this.antiRaid.log(
       message.guild,
-      'AutoMod · Prevención Lite',
-      `<@${message.author.id}>: **${detection.rule}**. ${detection.detail}\nEl contenido fue retirado sin añadir strikes ni sanciones.`,
+      minorInStricter ? 'AutoMod · Falta leve retirada' : 'AutoMod · Prevención sin sanción',
+      `<@${message.author.id}>: **${detection.rule}**. ${detection.detail}\n${
+        minorInStricter
+          ? 'Clasificada como leve, por lo que no genera strike en este nivel.'
+          : 'El contenido fue retirado sin añadir strikes ni sanciones.'
+      }`,
       0xfee75c,
     );
   }
@@ -166,7 +197,10 @@ export class AutoMod {
     if (!currentSettings.enabled) {
       return { applied: false, cancelled: true, finalStrike: currentSettings.finalStrike };
     }
-    if (currentSettings.responseMode === 'passive') {
+    if (
+      currentSettings.responseMode === 'passive'
+      || !isSanctionable(detection.severity, currentSettings.sanctionSeverity ?? 'all')
+    ) {
       await this.handlePassiveDetection(message, detection, currentSettings);
       return { applied: false, cancelled: true, finalStrike: currentSettings.finalStrike };
     }
@@ -205,7 +239,13 @@ export class AutoMod {
     await message.delete().catch(() => null);
     settings = this.settings(message.guild.id);
     if (!settings.enabled) return;
-    if (settings.responseMode === 'passive') {
+    // El borrado ocurre siempre; el strike solo si el nivel permite sancionar
+    // esta gravedad. Así el nivel Pasivo nunca sanciona y el Equilibrado
+    // reserva las sanciones para lo grave.
+    if (
+      settings.responseMode === 'passive'
+      || !isSanctionable(detection.severity, settings.sanctionSeverity ?? 'all')
+    ) {
       await this.handlePassiveDetection(message, detection, settings);
       return;
     }

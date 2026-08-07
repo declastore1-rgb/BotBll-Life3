@@ -252,10 +252,11 @@
 
           <div id="security-view-automod" class="security-module-panel" data-permission="automod">
             <form id="automod-form" class="panel-card settings-form security-settings-card">
-              <div class="card-header"><div><div class="eyebrow">CONTENIDO Y FLOOD</div><h3>AutoMod avanzado</h3><p class="muted helper-copy">Lite elimina el contenido detectado y avisa sin crear strikes.</p></div></div>
+              <div class="card-header"><div><div class="eyebrow">CONTENIDO Y FLOOD</div><h3>AutoMod avanzado</h3><p class="muted helper-copy">El contenido infractor se retira siempre. Quién recibe sanción depende del alcance que elijas.</p></div></div>
               <div class="setting-row featured"><div><strong>Protección AutoMod</strong><p>Analiza mensajes y archivos de miembros no confiables.</p></div><label class="switch"><input name="enabled" type="checkbox"><span></span></label></div>
               <div class="form-grid three">
                 <label class="field"><span>Nivel de respuesta</span><select name="responseMode"><option value="passive">Pasivo · sin strikes</option><option value="balanced">Equilibrado</option><option value="strict">Estricto</option></select></label>
+                <label class="field"><span>Alcance de sanciones</span><select name="sanctionSeverity"><option value="none">Nunca sancionar · solo borrar</option><option value="high">Solo faltas graves</option><option value="all">Cualquier falta</option></select><small>Leves: mayúsculas y flood de emojis. Graves: palabras prohibidas, invitaciones, enlaces sin autorizar y archivos ejecutables.</small></label>
                 <label class="check-row"><input name="blockInvites" type="checkbox"><span><strong>Bloquear invitaciones</strong><small>Elimina invitaciones de Discord.</small></span></label>
                 <label class="check-row"><input name="blockUnauthorizedLinks" type="checkbox"><span><strong>Enlaces no autorizados</strong><small>Solo permite dominios de la whitelist.</small></span></label>
                 <label class="check-row"><input name="blockSuspiciousFiles" type="checkbox"><span><strong>Archivos sospechosos</strong><small>Bloquea extensiones configuradas.</small></span></label>

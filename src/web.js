@@ -18,6 +18,7 @@ import { buildClaimKeyPanel, syncClaimKeyPublishedPanels } from './claimKey.js';
 import { buildCustomEmbed } from './embeds.js';
 import {
   getSecurityProfile,
+  isSanctionSeverity,
   isSecurityProfileId,
   isSecurityResponseMode,
   listSecurityProfiles,
@@ -286,6 +287,12 @@ function sanitizeAutoMod(body) {
   if (body.responseMode !== undefined) {
     if (!isSecurityResponseMode(body.responseMode)) throw new Error('El nivel de respuesta AutoMod no es válido.');
     patch.responseMode = body.responseMode;
+  }
+  if (body.sanctionSeverity !== undefined) {
+    if (!isSanctionSeverity(body.sanctionSeverity)) {
+      throw new Error('El alcance de sanciones de AutoMod no es válido.');
+    }
+    patch.sanctionSeverity = body.sanctionSeverity;
   }
   const numericFields = {
     maxCapsPercent: [50, 100],
