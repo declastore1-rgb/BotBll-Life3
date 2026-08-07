@@ -10,6 +10,7 @@ import { AntiNuke } from './antiNuke.js';
 import { AntiRaid } from './antiRaid.js';
 import { AutoMod } from './autoMod.js';
 import { EmbedScheduler } from './embedScheduler.js';
+import { MODERATION_PERMISSIONS, Moderation } from './moderation.js';
 import { commands } from './commands.js';
 import { claimKeyIds, handleClaimKeyClaim } from './claimKey.js';
 import { config, defaultGuildSettings } from './config.js';
@@ -70,6 +71,7 @@ const antiNuke = new AntiNuke(client, store, antiRaid);
 antiNuke.start();
 const embedScheduler = new EmbedScheduler(client, store, config.guildId);
 embedScheduler.start();
+const moderation = new Moderation({ client, store, antiRaid, autoMod });
 const webServer = createWebServer({ client, store, antiRaid, antiNuke, autoMod });
 
 client.once(Events.ClientReady, async (readyClient) => {
@@ -81,7 +83,7 @@ client.once(Events.ClientReady, async (readyClient) => {
     presenceTimer = setInterval(() => updatePresence(readyClient.user), 20_000);
     presenceTimer.unref();
     console.log(`✅ ${readyClient.user.tag} conectado en ${guild.name}.`);
-    console.log('✅ Comandos registrados: /panel create y /antiraid status.');
+    console.log(`✅ Comandos registrados: ${commands.map((command) => `/${command.name}`).join(', ')}.`);
     console.log('✅ Presencia En línea con 3 estados rotativos.');
   } catch (error) {
     console.error('No se pudo completar la inicialización:', error);
@@ -100,6 +102,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
           flags: MessageFlags.Ephemeral,
           allowedMentions: { roles: [] },
         });
+        return;
+      }
+
+      const requiredPermission = MODERATION_PERMISSIONS[interaction.commandName];
+      if (requiredPermission !== undefined) {
+        // Doble verificación: el rol de comandos ya se comprobó arriba y aquí
+        // se exige además el permiso nativo de Discord correspondiente.
+        if (!member?.permissions?.has(requiredPermission)) {
+          await interaction.reply({
+            content: 'Te falta el permiso de Discord necesario para este comando.',
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+        await moderation.handle(interaction);
         return;
       }
 

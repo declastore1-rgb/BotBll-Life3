@@ -1245,6 +1245,7 @@ export function createWebServer({ client, store, antiRaid, antiNuke, autoMod }) 
       if (entry.module === 'Anti-Raid') return can(user, 'antiraid');
       if (entry.module === 'Anti-Nuke') return can(user, 'antinuke');
       if (entry.module === 'AutoMod') return can(user, 'automod');
+      if (entry.module === 'Moderación') return can(user, 'automod');
       if (entry.module === 'Tickets') return can(user, 'tickets');
       if (entry.module === 'Claim Key') return can(user, 'claimkey');
       if (entry.module === 'Seguridad') return SECURITY_PERMISSIONS.some((permission) => can(user, permission));
